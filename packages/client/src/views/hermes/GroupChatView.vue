@@ -1,0 +1,81 @@
+<script setup lang="ts">
+import { computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import GroupChatPanel from '@/components/hermes/group-chat/GroupChatPanel.vue'
+import { useGroupChatStore } from '@/stores/hermes/group-chat'
+import { useProfilesStore } from '@/stores/hermes/profiles'
+import { useSettingsStore } from '@/stores/hermes/settings'
+
+const store = useGroupChatStore()
+const profilesStore = useProfilesStore()
+const settingsStore = useSettingsStore()
+const route = useRoute()
+const router = useRouter()
+
+const routeRoomId = computed(() => {
+    const value = route.params.roomId
+    return typeof value === 'string' && value.trim() ? value : null
+})
+
+const routeProfile = computed(() => {
+    const value = route.query?.profile
+    return typeof value === 'string' && value.trim() ? value : null
+})
+
+async function applyRouteProfile() {
+    const profile = routeProfile.value
+    if (!profile || profile === profilesStore.activeProfileName) return
+    if (!profilesStore.profiles.some(item => item.name === profile)) return
+    await profilesStore.switchProfile(profile)
+}
+
+async function syncRouteRoom() {
+    const roomId = routeRoomId.value
+    if (!roomId) {
+        if (!store.currentRoomId && store.rooms.length > 0) {
+            await router.replace({ name: 'hermes.groupChatRoom', params: { roomId: store.rooms[0].id } })
+        }
+        return
+    }
+
+    if (!store.rooms.some(room => room.id === roomId)) {
+        await router.replace({ name: 'hermes.groupChat' })
+        return
+    }
+
+    if (store.currentRoomId !== roomId) {
+        await store.joinRoom(roomId)
+    }
+}
+
+onMounted(async () => {
+    await profilesStore.fetchProfiles()
+    await applyRouteProfile()
+    await store.connect()
+    await Promise.all([
+        store.loadRooms(),
+        settingsStore.fetchSettings(),
+    ])
+    await syncRouteRoom()
+})
+
+watch([routeRoomId, routeProfile], async () => {
+    await applyRouteProfile()
+    if (store.rooms.length === 0) return
+    await syncRouteRoom()
+})
+</script>
+
+<template>
+    <div class="group-chat-view">
+        <GroupChatPanel />
+    </div>
+</template>
+
+<style scoped lang="scss">
+.group-chat-view {
+    height: calc(100 * var(--vh));
+    display: flex;
+    flex-direction: column;
+}
+</style>
