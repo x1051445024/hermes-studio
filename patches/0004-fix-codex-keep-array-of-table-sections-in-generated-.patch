@@ -13,8 +13,8 @@ repeated assignments inside a merged block are de-duplicated, and
 multi-line top-level array values are preserved across the merge.
 ---
  .../modules/coding-agents/services/index.ts   | 61 +++++++++++++++----
- tests/server/coding-agents-launch.test.ts     | 42 +++++++++++++
- 2 files changed, 90 insertions(+), 13 deletions(-)
+ tests/server/coding-agents-launch.test.ts     | 41 +++++++++++++
+ 2 files changed, 89 insertions(+), 13 deletions(-)
 
 diff --git a/packages/server/src/modules/coding-agents/services/index.ts b/packages/server/src/modules/coding-agents/services/index.ts
 index fe8a563..ee16908 100644
@@ -113,10 +113,10 @@ index fe8a563..ee16908 100644
    return {
      topLevelLines: [...topLevel.values()],
 diff --git a/tests/server/coding-agents-launch.test.ts b/tests/server/coding-agents-launch.test.ts
-index 516a3a7..af8e0c4 100644
+index 516a3a7..f11a9b4 100644
 --- a/tests/server/coding-agents-launch.test.ts
 +++ b/tests/server/coding-agents-launch.test.ts
-@@ -261,6 +261,48 @@ describe('coding agent launch preparation', () => {
+@@ -261,6 +261,47 @@ describe('coding agent launch preparation', () => {
      expect(config.slice(0, config.indexOf('\n['))).toContain('model = "codex-model"')
    })
 
@@ -138,8 +138,7 @@ index 516a3a7..af8e0c4 100644
 +      'timeout = 5',
 +      'type = "command"',
 +      '',
-+    ].join('
-+'))
++    ].join('\n'))
 +
 +    const launch = await prepareCodingAgentLaunch('codex', {
 +      profile: 'default',
