@@ -1,0 +1,1 @@
+connectivity test - local patches repo bootstrap
