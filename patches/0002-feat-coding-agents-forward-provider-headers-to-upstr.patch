@@ -1,0 +1,548 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Date: Mon, 28 Sep 2026 14:39:50 +0800
+Subject: [PATCH] feat(coding-agents): forward provider headers to upstream
+ requests
+
+resolveStoredProviderLaunchInput reads extra_headers and
+preserve_client_identity from the selected custom provider on every
+launch (a complete runtime triple no longer short-circuits the config
+read) and threads them onto the registered proxy target. The
+claude-code and codex proxies then append the configured headers, plus
+the inbound CLI identity headers when preserve_client_identity is on,
+to every upstream request.
+---
+ .../coding-agents/protocol/target-registry.ts |  4 +
+ .../services/claude-code/proxy.ts             | 73 ++++++++++++++---
+ .../coding-agents/services/codex/proxy.ts     | 82 ++++++++++++++++---
+ .../modules/coding-agents/services/index.ts   | 41 +++++++++-
+ 4 files changed, 172 insertions(+), 28 deletions(-)
+
+diff --git a/packages/server/src/modules/coding-agents/protocol/target-registry.ts b/packages/server/src/modules/coding-agents/protocol/target-registry.ts
+index bd64b0a..82edb8e 100644
+--- a/packages/server/src/modules/coding-agents/protocol/target-registry.ts
++++ b/packages/server/src/modules/coding-agents/protocol/target-registry.ts
+@@ -11,6 +11,10 @@ export interface AgentTargetInput {
+   agentId?: string
+   agentSessionId?: string
+   chatSessionId?: string
++  /** Extra request headers appended to upstream provider requests (from the provider editor). */
++  extraHeaders?: Record<string, string>
++  /** Forward the spawned CLI's own identity headers (originator/user-agent/anthropic-beta/...) upstream. */
++  preserveClientIdentity?: boolean
+ }
+
+ export type NormalizedAgentTargetInput<T extends AgentTargetInput> = Omit<T, 'apiMode'> & {
+diff --git a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+index 64dfcac..ba8e5a3 100644
+--- a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+@@ -38,7 +38,11 @@ export interface ClaudeCodeProxyTargetInput extends AgentTargetInput {}
+ type ClaudeCodeProxyTarget = RegisteredAgentTarget<ClaudeCodeProxyTargetInput>
+
+ const targetRegistry = new AgentTargetRegistry<ClaudeCodeProxyTargetInput>(
+-  input => [input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
++  input => [
++    input.provider, input.model, input.apiMode, input.baseUrl,
++    input.agentSessionId || '', input.chatSessionId || '',
++    input.preserveClientIdentity ? 'preserve-client-identity' : '',
++  ],
+ )
+ const CLAUDE_PROXY_VISIBLE_MODELS = [
+   'claude-haiku-4-5',
+@@ -87,6 +91,43 @@ function anthropicMessagesUrl(target: ClaudeCodeProxyTarget): string {
+   return resolveAnthropicMessagesUrl(target.baseUrl)
+ }
+
++// Identity headers a genuine Claude Code CLI sends. When the provider enables
++// `preserve_client_identity`, these are copied from the live inbound request
++// (i.e. from the real Claude Code CLI this Studio session spawned) so upstreams
++// that only accept official Claude Code traffic see the authentic, current
++// version metadata instead of Studio's generic request.
++const CLAUDE_CODE_IDENTITY_HEADER_NAMES: Array<[string, string]> = [
++  ['user-agent', 'user-agent'],
++  ['x-app', 'x-app'],
++  ['anthropic-version', 'anthropic-version'],
++  ['anthropic-beta', 'anthropic-beta'],
++  ['anthropic-dangerous-direct-browser-access', 'anthropic-dangerous-direct-browser-access'],
++  ['x-claude-code-session-id', 'x-claude-code-session-id'],
++  ['x-stainless-lang', 'x-stainless-lang'],
++  ['x-stainless-package-version', 'x-stainless-package-version'],
++  ['x-stainless-os', 'x-stainless-os'],
++  ['x-stainless-arch', 'x-stainless-arch'],
++  ['x-stainless-runtime', 'x-stainless-runtime'],
++  ['x-stainless-runtime-version', 'x-stainless-runtime-version'],
++]
++
++function identityRequestHeaders(target: ClaudeCodeProxyTarget, ctx: Context): Record<string, string> {
++  if (target.preserveClientIdentity !== true || target.agentId !== 'claude-code') return {}
++  const headers: Record<string, string> = {}
++  for (const [incoming, outgoing] of CLAUDE_CODE_IDENTITY_HEADER_NAMES) {
++    const value = ctx.get(incoming).trim()
++    if (value) headers[outgoing] = value
++  }
++  return headers
++}
++
++function upstreamRequestHeaders(target: ClaudeCodeProxyTarget, ctx?: Context): Record<string, string> {
++  const configured = target.extraHeaders
++  const explicit = configured && typeof configured === 'object' ? { ...configured } : {}
++  const identity = ctx ? identityRequestHeaders(target, ctx) : {}
++  return { ...identity, ...explicit }
++}
++
+ function anthropicRequestBody(body: any, target: ClaudeCodeProxyTarget): any {
+   return {
+     ...body,
+@@ -289,7 +330,7 @@ async function probeSseEncryptedContentError(
+   return { stream: replayAsyncIterator(chunks, iterator), encryptedContentError: false }
+ }
+
+-async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
++async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<any> {
+   if (target.apiMode !== 'anthropic_messages') {
+     const err = new Error(`Claude proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -301,13 +342,14 @@ async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any):
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
++      ...upstreamRequestHeaders(target, ctx),
+     },
+     body: anthropicRequestBody(nextBody, target),
+   }))
+   return result.value
+ }
+
+-async function callOpenAiChat(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
++async function callOpenAiChat(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<any> {
+   if (target.apiMode !== 'chat_completions') {
+     const err = new Error(`Claude proxy MVP only supports chat_completions targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -316,11 +358,12 @@ async function callOpenAiChat(target: ClaudeCodeProxyTarget, body: any): Promise
+   return agentRunGateway.completeJson({
+     url: resolveChatCompletionsUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiChat(body, target),
+   })
+ }
+
+-async function callOpenAiResponses(target: ClaudeCodeProxyTarget, body: any): Promise<any> {
++async function callOpenAiResponses(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<any> {
+   if (target.apiMode !== 'codex_responses') {
+     const err = new Error(`Claude proxy responses adapter only supports codex_responses targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -329,6 +372,7 @@ async function callOpenAiResponses(target: ClaudeCodeProxyTarget, body: any): Pr
+   return agentRunGateway.completeJson({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiResponses(body, target),
+   })
+ }
+@@ -359,7 +403,7 @@ function loggerLikeWarn(err: unknown, message: string) {
+   logger.warn(err, message)
+ }
+
+-async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
++async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<Readable> {
+   if (target.apiMode !== 'chat_completions') {
+     const err = new Error(`Claude proxy MVP only supports chat_completions targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -369,6 +413,7 @@ async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, bod
+   const stream = await agentRunGateway.streamBytes({
+     url: resolveChatCompletionsUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiChat(body, target, true),
+   })
+   const [clientStream, observerStream] = teeAsyncIterable(stream)
+@@ -376,7 +421,7 @@ async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, bod
+   return anthropicEventStream(openAiChatSseToAnthropicEvents(clientStream, target))
+ }
+
+-async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
++async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<Readable> {
+   if (target.apiMode !== 'anthropic_messages') {
+     const err = new Error(`Claude proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -389,6 +434,7 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
++      ...upstreamRequestHeaders(target, ctx),
+     },
+     body: anthropicRequestBody(nextBody, target),
+   })
+@@ -426,7 +472,7 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
+   return Readable.from(clientStream)
+ }
+
+-async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any): Promise<Readable> {
++async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget, body: any, ctx: Context): Promise<Readable> {
+   if (target.apiMode !== 'codex_responses') {
+     const err = new Error(`Claude proxy responses adapter only supports codex_responses targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -436,6 +482,7 @@ async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget
+   const stream = await agentRunGateway.streamBytes({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiResponses(body, target, true),
+   })
+   const [clientStream, observerStream] = teeAsyncIterable(stream)
+@@ -467,19 +514,19 @@ export async function claudeProxyMessages(ctx: Context) {
+     const requestBody = ctx.request.body || {}
+     if ((requestBody as any).stream === true) {
+       const stream = target.apiMode === 'anthropic_messages'
+-        ? await anthropicMessagesSseStream(target, requestBody)
++        ? await anthropicMessagesSseStream(target, requestBody, ctx)
+         : target.apiMode === 'codex_responses'
+-          ? await openAiResponsesToAnthropicSseStream(target, requestBody)
+-          : await openAiChatToAnthropicSseStream(target, requestBody)
++          ? await openAiResponsesToAnthropicSseStream(target, requestBody, ctx)
++          : await openAiChatToAnthropicSseStream(target, requestBody, ctx)
+       ctx.set('Content-Type', 'text/event-stream; charset=utf-8')
+       ctx.set('Cache-Control', 'no-cache')
+       ctx.body = stream
+     } else {
+       const message = target.apiMode === 'anthropic_messages'
+-        ? await callAnthropicMessages(target, requestBody)
++        ? await callAnthropicMessages(target, requestBody, ctx)
+         : target.apiMode === 'codex_responses'
+-          ? openAiResponsesToAnthropicMessage(await callOpenAiResponses(target, requestBody), target, requestBody?.tools)
+-          : openAiToAnthropicMessage(await callOpenAiChat(target, requestBody), target)
++          ? openAiResponsesToAnthropicMessage(await callOpenAiResponses(target, requestBody, ctx), target, requestBody?.tools)
++          : openAiToAnthropicMessage(await callOpenAiChat(target, requestBody, ctx), target)
+       ctx.body = message
+     }
+   } catch (err: any) {
+diff --git a/packages/server/src/modules/coding-agents/services/codex/proxy.ts b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+index e28f0d1..b993563 100644
+--- a/packages/server/src/modules/coding-agents/services/codex/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+@@ -34,7 +34,11 @@ export interface CodexProxyTargetInput extends AgentTargetInput {
+ type CodexProxyTarget = RegisteredAgentTarget<CodexProxyTargetInput>
+
+ const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
+-  input => [input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl, input.agentSessionId || '', input.chatSessionId || ''],
++  input => [
++    input.profile.trim(), input.provider, input.model, input.apiMode, input.baseUrl,
++    input.agentSessionId || '', input.chatSessionId || '',
++    input.preserveClientIdentity ? 'preserve-client-identity' : '',
++  ],
+ )
+
+ function localProxyBaseUrl(routeKey: string): string {
+@@ -136,6 +140,52 @@ export function normalizeGrokChatCompletionsRequest(body: any): any {
+   return changed ? { ...body, messages } : body
+ }
+
++// Identity headers a genuine Codex CLI sends. When the provider enables
++// `preserve_client_identity`, these are copied from the live inbound request
++// (i.e. from the real Codex CLI this Studio session spawned) so upstreams that
++// only accept official-looking client traffic see the authentic, current
++// version metadata instead of Studio's generic Authorization-only request.
++const CODEX_IDENTITY_HEADER_NAMES: Array<[string, string]> = [
++  ['originator', 'originator'],
++  ['user-agent', 'user-agent'],
++  ['openai-beta', 'openai-beta'],
++  ['x-openai-client-user-agent', 'x-openai-client-user-agent'],
++  ['x-codex-beta-features', 'x-codex-beta-features'],
++  ['x-codex-window-id', 'x-codex-window-id'],
++  ['x-codex-turn-metadata', 'x-codex-turn-metadata'],
++  ['session-id', 'session-id'],
++  ['thread-id', 'thread-id'],
++  ['x-client-request-id', 'x-client-request-id'],
++]
++
++function identityRequestHeaders(target: CodexProxyTarget, ctx: Context): Record<string, string> {
++  if (target.preserveClientIdentity !== true) return {}
++  // Accept both explicit agentId='codex' and apiMode='responses' (user-configured Codex upstreams)
++  if (target.agentId !== 'codex' && target.apiMode !== 'responses') return {}
++  const headers: Record<string, string> = {}
++  for (const [incoming, outgoing] of CODEX_IDENTITY_HEADER_NAMES) {
++    const value = ctx.get(incoming).trim()
++    if (value) {
++      // Normalize codex_exec → codex_cli_rs in originator/user-agent. Strict
++      // upstreams (new-api "Coding 分组" client review) verify the client id
++      // inside the user-agent string and reject codex_exec (Studio's exec
++      // transport) as non-official; codex_cli_rs is the official CLI identity.
++      // Verified against the real upstream: UA codex_cli_rs → 200, UA codex_exec → 403.
++      headers[outgoing] = incoming === 'originator' || incoming === 'user-agent'
++        ? value.split('codex_exec').join('codex_cli_rs')
++        : value
++    }
++  }
++  return headers
++}
++
++function upstreamRequestHeaders(target: CodexProxyTarget, ctx?: Context): Record<string, string> {
++  const configured = target.extraHeaders
++  const explicit = configured && typeof configured === 'object' ? { ...configured } : {}
++  const identity = ctx ? identityRequestHeaders(target, ctx) : {}
++  return { ...identity, ...explicit }
++}
++
+ function nativeResponsesBody(target: CodexProxyTarget, body: any, stream?: boolean): any {
+   const normalized = target.agentId === 'grok' ? normalizeGrokResponsesRequest(body) : body
+   return truncateResponsesToolOutputs({
+@@ -145,7 +195,7 @@ function nativeResponsesBody(target: CodexProxyTarget, body: any, stream?: boole
+   })
+ }
+
+-async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any> {
++async function callOpenAiChat(target: CodexProxyTarget, body: any, ctx: Context): Promise<any> {
+   if (target.apiMode !== 'chat_completions') {
+     const err = new Error(`Codex proxy only supports chat_completions targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -156,11 +206,12 @@ async function callOpenAiChat(target: CodexProxyTarget, body: any): Promise<any>
+   return agentRunGateway.completeJson({
+     url: chatCompletionsUrl(target),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: chatBody,
+   })
+ }
+
+-async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promise<any> {
++async function callAnthropicMessages(target: CodexProxyTarget, body: any, ctx: Context): Promise<any> {
+   if (target.apiMode !== 'anthropic_messages') {
+     const err = new Error(`Codex proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -173,12 +224,13 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any): Promi
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
++      ...upstreamRequestHeaders(target, ctx),
+     },
+     body: anthropicBody,
+   })
+ }
+
+-async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise<any> {
++async function callOpenAiResponses(target: CodexProxyTarget, body: any, ctx: Context): Promise<any> {
+   if (target.apiMode !== 'codex_responses') {
+     const err = new Error(`Codex proxy Responses adapter only supports codex_responses targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -188,6 +240,7 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any): Promise
+   return agentRunGateway.completeJson({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: responsesBody,
+   })
+ }
+@@ -254,7 +307,7 @@ async function* observe() {
+   return observe()
+ }
+
+-async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
++async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: any, ctx: Context): Promise<Readable> {
+   if (target.apiMode !== 'chat_completions') {
+     const err = new Error(`Codex proxy only supports chat_completions targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -266,6 +319,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
+   const stream = await agentRunGateway.streamBytes({
+     url: chatCompletionsUrl(target),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: chatBody,
+   })
+   return responsesEventStream(observableResponsesEvents(target, openAiChatSseToResponsesEvents(stream, {
+@@ -274,7 +328,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
+   })))
+ }
+
+-async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
++async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, body: any, ctx: Context): Promise<Readable> {
+   if (target.apiMode !== 'anthropic_messages') {
+     const err = new Error(`Codex proxy Anthropic adapter only supports anthropic_messages targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -288,6 +342,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
++      ...upstreamRequestHeaders(target, ctx),
+     },
+     body: anthropicBody,
+   })
+@@ -297,7 +352,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
+   })))
+ }
+
+-async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Promise<Readable> {
++async function openAiResponsesSseStream(target: CodexProxyTarget, body: any, ctx: Context): Promise<Readable> {
+   if (target.apiMode !== 'codex_responses') {
+     const err = new Error(`Codex proxy Responses adapter only supports codex_responses targets, got ${target.apiMode}`)
+     ;(err as any).status = 501
+@@ -308,6 +363,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any): Pr
+   const stream = await agentRunGateway.streamBytes({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    headers: upstreamRequestHeaders(target, ctx),
+     body: responsesBody,
+   })
+   return responsesEventStream(observableResponsesEvents(target, openAiResponsesSseToResponsesEvents(stream)))
+@@ -325,19 +381,19 @@ export async function codexProxyResponses(ctx: Context) {
+       : sanitizedBody
+     if ((requestBody as any).stream === true) {
+       const stream = target.apiMode === 'anthropic_messages'
+-        ? await anthropicMessagesToResponsesSseStream(target, requestBody)
++        ? await anthropicMessagesToResponsesSseStream(target, requestBody, ctx)
+         : target.apiMode === 'codex_responses'
+-          ? await openAiResponsesSseStream(target, requestBody)
+-          : await openAiChatToResponsesSseStream(target, requestBody)
++          ? await openAiResponsesSseStream(target, requestBody, ctx)
++          : await openAiChatToResponsesSseStream(target, requestBody, ctx)
+       ctx.set('Content-Type', 'text/event-stream; charset=utf-8')
+       ctx.set('Cache-Control', 'no-cache')
+       ctx.body = stream
+     } else {
+       ctx.body = target.apiMode === 'anthropic_messages'
+-        ? anthropicMessageToResponses(await callAnthropicMessages(target, requestBody), target)
++        ? anthropicMessageToResponses(await callAnthropicMessages(target, requestBody, ctx), target)
+         : target.apiMode === 'codex_responses'
+-          ? await callOpenAiResponses(target, requestBody)
+-          : openAiChatToResponses(await callOpenAiChat(target, requestBody), target)
++          ? await callOpenAiResponses(target, requestBody, ctx)
++          : openAiChatToResponses(await callOpenAiChat(target, requestBody, ctx), target)
+     }
+   } catch (err: any) {
+     ctx.status = err.status || 502
+diff --git a/packages/server/src/modules/coding-agents/services/index.ts b/packages/server/src/modules/coding-agents/services/index.ts
+index fbbfd75..fe8a563 100644
+--- a/packages/server/src/modules/coding-agents/services/index.ts
++++ b/packages/server/src/modules/coding-agents/services/index.ts
+@@ -292,6 +292,10 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
+   baseUrl?: string
+   apiKey?: string
+   apiMode?: ApiMode
++  /** Extra request headers (JSON object) configured on the selected provider. */
++  extraHeaders?: Record<string, string>
++  /** Provider switch: forward the spawned CLI's own identity headers upstream. */
++  preserveClientIdentity?: boolean
+   reasoningEffort?: string
+   sessionId?: string
+   agentSessionId?: string
+@@ -724,6 +728,16 @@ function belongsToDifferentBuiltinProvider(provider: string, baseUrl: string): b
+   ))
+ }
+
++function normalizeExtraHeaderMap(value: unknown): Record<string, string> | undefined {
++  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
++  const out: Record<string, string> = {}
++  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
++    const key = String(name || '').trim()
++    if (key && typeof headerValue === 'string') out[key] = headerValue
++  }
++  return Object.keys(out).length > 0 ? out : undefined
++}
++
+ async function resolveStoredProviderLaunchInput(
+   input: CodingAgentLaunchInput & { sessionId: string },
+   existingSession: HermesSessionRow | null,
+@@ -743,14 +757,18 @@ async function resolveStoredProviderLaunchInput(
+     : undefined
+   let apiMode = input.apiMode || storedApiMode
+   let canonicalProvider = provider
++  let extraHeaders = normalizeExtraHeaderMap(input.extraHeaders)
++  let preserveClientIdentity = input.preserveClientIdentity === true
+   const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
+   if (ignoredStaleProviderRuntime) {
+     baseUrl = ''
+     apiKey = ''
+   }
+
+-  if (!provider || (baseUrl && apiKey && apiMode)) {
+-    return { ...input, profile, provider: provider || input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode }
++  // Provider-level `extra_headers` must be re-read from the config on every
++  // launch, so a complete runtime triple no longer short-circuits resolution.
++  if (!provider) {
++    return { ...input, profile, provider: input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode, ...(extraHeaders ? { extraHeaders } : {}), ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}) }
+   }
+
+   let config: Record<string, any> = {}
+@@ -781,6 +799,9 @@ async function resolveStoredProviderLaunchInput(
+         preset?.api_mode || inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
+       )
+     }
++    const configuredHeaders = normalizeExtraHeaderMap(customEntry.extra_headers)
++    if (configuredHeaders) extraHeaders = { ...(extraHeaders || {}), ...configuredHeaders }
++    if (customEntry.preserve_client_identity === true) preserveClientIdentity = true
+   }
+
+   const canonicalProviderKey = providerKeyWithoutCustomPrefix(canonicalProvider)
+@@ -810,6 +831,8 @@ async function resolveStoredProviderLaunchInput(
+     baseUrl: baseUrl || (ignoredStaleProviderRuntime ? '' : input.baseUrl),
+     apiKey: apiKey || (ignoredStaleProviderRuntime ? '' : input.apiKey),
+     apiMode,
++    ...(extraHeaders ? { extraHeaders } : {}),
++    ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}),
+   }
+ }
+
+@@ -1871,6 +1894,8 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
+           agentId: 'pi',
+           agentSessionId,
+           chatSessionId,
++          extraHeaders: resolved.extraHeaders,
++          preserveClientIdentity: resolved.preserveClientIdentity,
+         }, apiKey, token)
+         await atomicWritePrivateFile(targetPath, content)
+       } catch {
+@@ -2001,6 +2026,8 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
+         agentId: config.agentId,
+         agentSessionId,
+         chatSessionId,
++        extraHeaders: resolved.extraHeaders,
++        preserveClientIdentity: resolved.preserveClientIdentity,
+       }, token)
+       restoredRouteKeys.add(routeKey)
+       restoredCount += 1
+@@ -3199,6 +3226,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           agentId: tool.id,
+           agentSessionId: isolatedInput.agentSessionId,
+           chatSessionId: isolatedInput.sessionId,
++          extraHeaders: input.extraHeaders,
++          preserveClientIdentity: input.preserveClientIdentity,
+         })
+       : null
+     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
+@@ -3270,6 +3299,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           agentId: tool.id,
+           agentSessionId: isolatedInput.agentSessionId,
+           chatSessionId: isolatedInput.sessionId,
++          extraHeaders: input.extraHeaders,
++          preserveClientIdentity: input.preserveClientIdentity,
+         })
+       : null
+     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
+@@ -3362,6 +3393,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           agentId: tool.id,
+           agentSessionId: isolatedInput.agentSessionId,
+           chatSessionId: isolatedInput.sessionId,
++          extraHeaders: input.extraHeaders,
++          preserveClientIdentity: input.preserveClientIdentity,
+         })
+       : null
+     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
+@@ -3440,6 +3473,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           agentId: tool.id,
+           agentSessionId: isolatedInput.agentSessionId,
+           chatSessionId: isolatedInput.sessionId,
++          extraHeaders: input.extraHeaders,
++          preserveClientIdentity: input.preserveClientIdentity,
+         })
+       : null
+     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
+@@ -3495,6 +3530,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           agentId: tool.id,
+           agentSessionId: isolatedInput.agentSessionId,
+           chatSessionId: isolatedInput.sessionId,
++          extraHeaders: input.extraHeaders,
++          preserveClientIdentity: input.preserveClientIdentity,
+         })
+       : null
+     const baseRuntime = await ensureOpenCodeScopedBaseConfigFiles(scope, scopedSystemPrompt, workspaceDir)

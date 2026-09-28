@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Date: Mon, 28 Sep 2026 14:39:51 +0800
+Subject: [PATCH] fix(coding-agents): route CLI traffic through the local proxy
+ on 8787
+
+localProxyBaseUrl returned http://127.0.0.1:${config.port}; it now
+returns http://127.0.0.1:8787, so Codex and Claude Code traffic egresses
+through the local Headroom proxy before being forwarded back to this
+Studio server. This restores the behaviour the previously hand-patched
+dist build had.
+---
+ .../src/modules/coding-agents/services/claude-code/proxy.ts | 5 ++++-
+ .../src/modules/coding-agents/services/codex/proxy.ts       | 6 +++++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+index ba8e5a3..02be9ff 100644
+--- a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+@@ -51,7 +51,10 @@ const CLAUDE_PROXY_VISIBLE_MODELS = [
+ ]
+
+ function localProxyBaseUrl(routeKey: string): string {
+-  return `http://127.0.0.1:${config.port}/api/claude-code-proxy/${routeKey}`
++  // Local customization: route Claude Code traffic via the local Headroom
++  // proxy on 127.0.0.1:8787 (which forwards it back to this Studio server).
++  // Matches the previously patched dist behavior.
++  return `http://127.0.0.1:8787/api/claude-code-proxy/${routeKey}`
+ }
+
+ export function registerClaudeCodeProxyTarget(input: ClaudeCodeProxyTargetInput): { baseUrl: string; token: string; routeKey: string } {
+diff --git a/packages/server/src/modules/coding-agents/services/codex/proxy.ts b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+index b993563..3868c65 100644
+--- a/packages/server/src/modules/coding-agents/services/codex/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+@@ -42,7 +42,11 @@ const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
+ )
+
+ function localProxyBaseUrl(routeKey: string): string {
+-  return `http://127.0.0.1:${config.port}/api/codex-proxy/${routeKey}/v1`
++  // Local customization: route Codex-through-Studio traffic via the local
++  // Headroom proxy on 127.0.0.1:8787 (which forwards it back to this Studio
++  // server) so coding-agent payloads get Headroom's compression/memory pass.
++  // Matches the previously patched dist behavior.
++  return `http://127.0.0.1:8787/api/codex-proxy/${routeKey}/v1`
+ }
+
+ export function registerCodexProxyTarget(input: CodexProxyTargetInput): { baseUrl: string; token: string; routeKey: string } {

@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Date: Mon, 28 Sep 2026 14:39:50 +0800
+Subject: [PATCH] feat(providers): accept extra_headers and
+ preserve_client_identity
+
+Lets a custom provider in config.yaml carry two extra fields through
+Studio normalisation and the provider editor API:
+
+* extra_headers: request headers appended to coding-agent upstream requests
+* preserve_client_identity: forward the spawned CLI's own identity headers
+
+Both are read-only through the editor API, validated (single-line string
+values, 64 KiB cap) and written back to config.yaml without dropping
+unknown sibling keys.
+---
+ .../services/providers/provider-editor.ts     | 45 +++++++++++++++++++
+ .../studio/contracts/provider-compat.ts       | 20 ++++++++-
+ 2 files changed, 64 insertions(+), 1 deletion(-)
+
+diff --git a/packages/server/src/modules/hermes/services/providers/provider-editor.ts b/packages/server/src/modules/hermes/services/providers/provider-editor.ts
+index 04e8f28..c966bee 100644
+--- a/packages/server/src/modules/hermes/services/providers/provider-editor.ts
++++ b/packages/server/src/modules/hermes/services/providers/provider-editor.ts
+@@ -26,6 +26,8 @@ export type ProviderEditableField =
+   | 'request_timeout_seconds'
+   | 'stale_timeout_seconds'
+   | 'extra_body'
++  | 'extra_headers'
++  | 'preserve_client_identity'
+ export type CredentialAction = 'keep' | 'replace' | 'clear'
+
+ export interface ProviderEditorDetail {
+@@ -46,6 +48,8 @@ export interface ProviderEditorDetail {
+   request_timeout_seconds?: number
+   stale_timeout_seconds?: number
+   extra_body?: Record<string, unknown>
++  extra_headers?: Record<string, unknown>
++  preserve_client_identity?: boolean
+   connection_test_supported: boolean
+   connection_test_reason?: string
+   revision: string
+@@ -64,6 +68,8 @@ export interface ProviderEditorPatch {
+   request_timeout_seconds?: number | null
+   stale_timeout_seconds?: number | null
+   extra_body?: Record<string, unknown> | null
++  extra_headers?: Record<string, unknown> | null
++  preserve_client_identity?: boolean | null
+ }
+
+ export class ProviderEditorError extends Error {
+@@ -252,6 +258,8 @@ const CUSTOM_PROVIDER_EDITABLE_FIELDS: ProviderEditableField[] = [
+   'request_timeout_seconds',
+   'stale_timeout_seconds',
+   'extra_body',
++  'extra_headers',
++  'preserve_client_identity',
+ ]
+
+ function editableFields(source: ProviderSource): ProviderEditableField[] {
+@@ -337,6 +345,11 @@ function buildDetailFromRaw(
+   const requestTimeoutSeconds = optionalPositiveNumber(entry, ['request_timeout_seconds', 'requestTimeoutSeconds'])
+   const staleTimeoutSeconds = optionalPositiveNumber(entry, ['stale_timeout_seconds', 'staleTimeoutSeconds'])
+   const extraBody = optionalObject(entry, ['extra_body', 'extraBody'])
++  const extraHeaders = optionalObject(entry, ['extra_headers', 'extraHeaders'])
++  const rawPreserveClientIdentity = entry
++    ? existingAlias(entry, ['preserve_client_identity', 'preserveClientIdentity'], undefined)
++    : undefined
++  const preserveClientIdentity = typeof rawPreserveClientIdentity === 'boolean' ? rawPreserveClientIdentity : undefined
+   const testCapability = connectionTestCapability(apiMode)
+   const revision = revisionFor({
+     providerId,
+@@ -368,6 +381,8 @@ function buildDetailFromRaw(
+     ...(requestTimeoutSeconds !== undefined ? { request_timeout_seconds: requestTimeoutSeconds } : {}),
+     ...(staleTimeoutSeconds !== undefined ? { stale_timeout_seconds: staleTimeoutSeconds } : {}),
+     ...(extraBody !== undefined ? { extra_body: extraBody } : {}),
++    ...(extraHeaders !== undefined ? { extra_headers: extraHeaders } : {}),
++    ...(preserveClientIdentity !== undefined ? { preserve_client_identity: preserveClientIdentity } : {}),
+     connection_test_supported: testCapability.supported,
+     ...(testCapability.reason ? { connection_test_reason: testCapability.reason } : {}),
+     revision,
+@@ -590,6 +605,8 @@ function changedFields(before: ProviderEditorDetail, patch: ProviderEditorPatch)
+   if (patch.request_timeout_seconds !== undefined && patch.request_timeout_seconds !== (before.request_timeout_seconds ?? null)) fields.push('request_timeout_seconds')
+   if (patch.stale_timeout_seconds !== undefined && patch.stale_timeout_seconds !== (before.stale_timeout_seconds ?? null)) fields.push('stale_timeout_seconds')
+   if (patch.extra_body !== undefined && JSON.stringify(stableObject(patch.extra_body)) !== JSON.stringify(stableObject(before.extra_body ?? null))) fields.push('extra_body')
++  if (patch.extra_headers !== undefined && JSON.stringify(stableObject(patch.extra_headers)) !== JSON.stringify(stableObject(before.extra_headers ?? null))) fields.push('extra_headers')
++  if (patch.preserve_client_identity !== undefined && (patch.preserve_client_identity ?? null) !== (before.preserve_client_identity ?? null)) fields.push('preserve_client_identity')
+   if (patch.credential_action === 'replace') fields.push('api_key_replaced')
+   if (patch.credential_action === 'clear') fields.push('api_key_cleared')
+   return fields
+@@ -613,6 +630,8 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
+   if (patch.request_timeout_seconds !== undefined && !allowed.has('request_timeout_seconds')) throw new ProviderEditorError('Request timeout is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.stale_timeout_seconds !== undefined && !allowed.has('stale_timeout_seconds')) throw new ProviderEditorError('Stale timeout is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.extra_body !== undefined && !allowed.has('extra_body')) throw new ProviderEditorError('Extra request body is read-only', 400, 'FIELD_READ_ONLY')
++  if (patch.extra_headers !== undefined && !allowed.has('extra_headers')) throw new ProviderEditorError('Extra request headers are read-only', 400, 'FIELD_READ_ONLY')
++  if (patch.preserve_client_identity !== undefined && !allowed.has('preserve_client_identity')) throw new ProviderEditorError('Client identity forwarding is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.credential_action && patch.credential_action !== 'keep' && !allowed.has('api_key')) throw new ProviderEditorError('Provider credential is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.label !== undefined && (!patch.label.trim() || patch.label.trim().length > 100)) throw new ProviderEditorError('Provider label must contain 1-100 characters', 400, 'INVALID_LABEL')
+   if (patch.base_url !== undefined) normalizeUrl(patch.base_url)
+@@ -630,6 +649,24 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
+       throw new ProviderEditorError('extra_body must not exceed 64 KiB', 400, 'INVALID_EXTRA_BODY')
+     }
+   }
++  if (patch.extra_headers !== undefined && patch.extra_headers !== null) {
++    if (typeof patch.extra_headers !== 'object' || Array.isArray(patch.extra_headers)) {
++      throw new ProviderEditorError('extra_headers must be a JSON object', 400, 'INVALID_EXTRA_HEADERS')
++    }
++    for (const [headerName, headerValue] of Object.entries(patch.extra_headers)) {
++      const name = String(headerName || '').trim()
++      if (!name || typeof headerValue !== 'string' || /[\r\n]/.test(String(headerValue))) {
++        throw new ProviderEditorError('extra_headers must map header names to single-line string values', 400, 'INVALID_EXTRA_HEADERS')
++      }
++    }
++    if (JSON.stringify(patch.extra_headers).length > 65_536) {
++      throw new ProviderEditorError('extra_headers must not exceed 64 KiB', 400, 'INVALID_EXTRA_HEADERS')
++    }
++  }
++  if (patch.preserve_client_identity !== undefined && patch.preserve_client_identity !== null
++    && typeof patch.preserve_client_identity !== 'boolean') {
++    throw new ProviderEditorError('preserve_client_identity must be a boolean', 400, 'INVALID_PRESERVE_CLIENT_IDENTITY')
++  }
+ }
+
+ export async function updateProviderEditorDetail(
+@@ -695,6 +732,14 @@ export async function updateProviderEditorDetail(
+         if (patch.extra_body === null) deleteAliases(source.configEntry!, ['extra_body', 'extraBody'])
+         else setExistingAlias(source.configEntry!, ['extra_body', 'extraBody'], patch.extra_body, 'extra_body')
+       }
++      if (patch.extra_headers !== undefined) {
++        if (patch.extra_headers === null) deleteAliases(source.configEntry!, ['extra_headers', 'extraHeaders'])
++        else setExistingAlias(source.configEntry!, ['extra_headers', 'extraHeaders'], patch.extra_headers, 'extra_headers')
++      }
++      if (patch.preserve_client_identity !== undefined) {
++        if (patch.preserve_client_identity === null) deleteAliases(source.configEntry!, ['preserve_client_identity', 'preserveClientIdentity'])
++        else setExistingAlias(source.configEntry!, ['preserve_client_identity', 'preserveClientIdentity'], patch.preserve_client_identity, 'preserve_client_identity')
++      }
+     }
+
+     if (credentialAction !== 'keep') {
+diff --git a/packages/server/src/modules/studio/contracts/provider-compat.ts b/packages/server/src/modules/studio/contracts/provider-compat.ts
+index 11e808c..2e49c2e 100644
+--- a/packages/server/src/modules/studio/contracts/provider-compat.ts
++++ b/packages/server/src/modules/studio/contracts/provider-compat.ts
+@@ -23,7 +23,7 @@ const KNOWN_KEYS = new Set([
+   'models',
+   'context_length', 'rate_limit_delay',
+   'request_timeout_seconds', 'stale_timeout_seconds',
+-  'discover_models', 'extra_body',
++  'discover_models', 'extra_body', 'extra_headers', 'preserve_client_identity',
+ ])
+
+ const CAMEL_ALIASES: Record<string, string> = {
+@@ -53,6 +53,8 @@ export interface NormalizedCustomProvider {
+   rate_limit_delay?: number
+   discover_models?: boolean
+   extra_body?: Record<string, any>
++  extra_headers?: Record<string, string>
++  preserve_client_identity?: boolean
+ }
+
+ function looksLikeUrl(value: string): boolean {
+@@ -177,6 +179,22 @@ export function normalizeCustomProviderEntry(
+   if (e.extra_body && typeof e.extra_body === 'object' && !Array.isArray(e.extra_body)) {
+     normalized.extra_body = { ...e.extra_body }
+   }
++  // preserve_client_identity: opt-in switch that forwards the spawned CLI's own
++  // identity headers upstream (official Codex / Claude Code client metadata).
++  if (typeof e.preserve_client_identity === 'boolean') {
++    normalized.preserve_client_identity = e.preserve_client_identity
++  }
++
++  // extra_headers: request headers appended to coding-agent upstream requests.
++  // Only string values are forwarded; anything else is dropped at read time.
++  if (e.extra_headers && typeof e.extra_headers === 'object' && !Array.isArray(e.extra_headers)) {
++    const headers: Record<string, string> = {}
++    for (const [headerName, headerValue] of Object.entries(e.extra_headers)) {
++      const name = String(headerName || '').trim()
++      if (name && typeof headerValue === 'string') headers[name] = headerValue
++    }
++    if (Object.keys(headers).length > 0) normalized.extra_headers = headers
++  }
+
+   // Surface unknown keys in the logs — same intent as Agent's warning, kept
+   // soft so unfamiliar fields don't break callers.

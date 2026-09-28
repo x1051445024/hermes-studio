@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Date: Mon, 28 Sep 2026 14:39:51 +0800
+Subject: [PATCH] fix(codex): keep array-of-table sections in generated
+ config.toml
+
+codexRuntimeUserConfig treated every [header] line as a plain table, so
+[[hooks.SessionStart]] and its nested [[hooks.SessionStart.hooks]] were
+merged into one section and the generated config.toml lost entries or
+produced duplicate keys. Table sections are now merged by name, array
+tables are kept isolated in their own block with their real header,
+repeated assignments inside a merged block are de-duplicated, and
+multi-line top-level array values are preserved across the merge.
+---
+ .../modules/coding-agents/services/index.ts   | 61 +++++++++++++++----
+ tests/server/coding-agents-launch.test.ts     | 42 +++++++++++++
+ 2 files changed, 90 insertions(+), 13 deletions(-)
+
+diff --git a/packages/server/src/modules/coding-agents/services/index.ts b/packages/server/src/modules/coding-agents/services/index.ts
+index fe8a563..ee16908 100644
+--- a/packages/server/src/modules/coding-agents/services/index.ts
++++ b/packages/server/src/modules/coding-agents/services/index.ts
+@@ -1316,7 +1316,7 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>):
+   featureLines: string[]
+ } {
+   const topLevel = new Map<string, string>()
+-  const sections = new Map<string, string[]>()
++  const sections = new Map<string, { header: string; lines: string[] }>()
+   const featureLines = new Map<string, string>()
+   const runtimeKeys = new Set([
+     'model',
+@@ -1332,19 +1332,47 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>):
+     'chatgpt_base_url',
+   ])
+   const runtimeFeatures = new Set(['tool_search', 'tool_search_always_defer_mcp_tools'])
+-
++  // Local fix (previously shipped as a dist patch): keep array-of-table
++  // sections isolated, merge table sections by name, preserve multi-line
++  // top-level array values, and de-duplicate repeated assignment keys inside
++  // merged sections so Codex never sees a duplicate-key TOML error.
++  let arraySectionIndex = 0
+   for (const content of contents) {
+     if (!content?.trim()) continue
+     let section = ''
+-    for (const line of content.split(/\r?\n/)) {
+-      const header = line.match(/^\s*\[([^\]]+)\]\s*$/)
+-      if (header) {
+-        section = header[1].trim()
++    let sectionKey = ''
++    const lines = content.split(/\r?\n/)
++    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
++      const line = lines[lineIndex]
++      const arrayHeader = line.match(/^\s*\[\[([^\]]+)\]\]\s*$/)
++      if (arrayHeader) {
++        section = arrayHeader[1].trim()
++        sectionKey = `array:${arraySectionIndex++}`
++        sections.set(sectionKey, { header: line.trim(), lines: [] })
++        continue
++      }
++      const tableHeader = line.match(/^\s*\[([^\]]+)\]\s*$/)
++      if (tableHeader) {
++        section = tableHeader[1].trim()
++        sectionKey = `table:${section}`
++        if (!sections.has(sectionKey)) sections.set(sectionKey, { header: line.trim(), lines: [] })
+         continue
+       }
+       const assignment = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)
+       if (!section) {
+-        if (assignment && !runtimeKeys.has(assignment[1])) topLevel.set(assignment[1], line)
++        if (assignment && !runtimeKeys.has(assignment[1])) {
++          let mergedLine = line
++          let bracketDepth = (line.slice(line.indexOf('=') + 1).match(/\[/g) || []).length
++            - (line.slice(line.indexOf('=') + 1).match(/\]/g) || []).length
++          while (bracketDepth > 0 && lineIndex + 1 < lines.length) {
++            lineIndex += 1
++            const nextLine = lines[lineIndex]
++            mergedLine += `\n${nextLine}`
++            bracketDepth += (nextLine.match(/\[/g) || []).length
++              - (nextLine.match(/\]/g) || []).length
++          }
++          topLevel.set(assignment[1], mergedLine)
++        }
+         continue
+       }
+       if (section === 'features') {
+@@ -1361,15 +1389,22 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>):
+         || section === 'account'
+         || section.startsWith('account.')
+       ) continue
+-      const lines = sections.get(section) || []
+-      if (line.trim()) lines.push(line)
+-      sections.set(section, lines)
++      const sectionBlock = sections.get(sectionKey)
++      if (sectionBlock && line.trim()) {
++        const assignKey = assignment ? assignment[1] : null
++        if (assignKey) {
++          sectionBlock.lines = sectionBlock.lines.filter((existingLine) => {
++            const existing = existingLine.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)
++            return !(existing && existing[1] === assignKey)
++          })
++        }
++        sectionBlock.lines.push(line)
++      }
+     }
+   }
+-
+   const sectionBlocks: string[] = []
+-  for (const [section, lines] of sections) {
+-    if (lines.length) sectionBlocks.push(`[${section}]\n${lines.join('\n')}`)
++  for (const { header, lines } of sections.values()) {
++    if (lines.length) sectionBlocks.push(`${header}\r\n${lines.join('\r\n')}`)
+   }
+   return {
+     topLevelLines: [...topLevel.values()],
+diff --git a/tests/server/coding-agents-launch.test.ts b/tests/server/coding-agents-launch.test.ts
+index 516a3a7..af8e0c4 100644
+--- a/tests/server/coding-agents-launch.test.ts
++++ b/tests/server/coding-agents-launch.test.ts
+@@ -261,6 +261,48 @@ describe('coding agent launch preparation', () => {
+     expect(config.slice(0, config.indexOf('\n['))).toContain('model = "codex-model"')
+   })
+
++  it('keeps Codex array-of-table hooks out of the features table', async () => {
++    const home = makeHome()
++    const globalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
++    mkdirSync(dirname(globalConfigPath), { recursive: true })
++    writeFileSync(globalConfigPath, [
++      '[features]',
++      'goals = true',
++      'hooks = true',
++      'js_repl = false',
++      '',
++      '[[hooks.SessionStart]]',
++      'matcher = "startup|resume|clear|compact"',
++      '',
++      '[[hooks.SessionStart.hooks]]',
++      "command = 'node \"/opt/agent-extensions/token-saver/agent-token-saver-hook.mjs\"'",
++      'timeout = 5',
++      'type = "command"',
++      '',
++    ].join('
++'))
++
++    const launch = await prepareCodingAgentLaunch('codex', {
++      profile: 'default',
++      provider: 'custom:test',
++      model: 'codex-model',
++      baseUrl: 'https://api.example.com/v1',
++      apiKey: 'test-key',
++      apiMode: 'codex_responses',
++      sessionId: 'codex-array-table-session',
++      agentSessionId: 'codex-array-table-agent-session',
++    })
++    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
++    const featureIndex = config.indexOf('[features]')
++    const featureBlock = config.slice(featureIndex)
++
++    expect(config).toContain('[[hooks.SessionStart]]')
++    expect(config).toContain('[[hooks.SessionStart.hooks]]')
++    expect(featureBlock).toContain('goals = true')
++    expect(featureBlock).not.toContain('matcher = "startup|resume|clear|compact"')
++    expect(featureBlock).not.toContain('type = "command"')
++  })
++
+   it('invalidates all scoped runtimes when a shared Coding Agent config changes', async () => {
+     makeHome()
+     const matched: string[] = []
