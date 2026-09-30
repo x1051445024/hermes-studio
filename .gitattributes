@@ -1,0 +1,2 @@
+bin/hermes-web-ui.mjs text eol=lf
+scripts/server-module-boundaries.mjs text eol=lf
