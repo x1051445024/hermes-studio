@@ -1,5 +1,5 @@
 import { logger } from '../../public/logging'
-import { updateUsage, fillMissingUsageCost } from '../../repositories/usage-store'
+import { saveContextUsage, updateUsage, fillMissingUsageCost } from '../../repositories/usage-store'
 import { getUsagePricing } from '../../repositories/usage-pricing-store'
 import { getModelCatalogSnapshot, refreshModelCatalog } from '../../public/model-catalog'
 import { normalizeUsageCost, estimateUsageCost, type UsageCost } from './usage-cost'
@@ -22,6 +22,8 @@ export interface RecordSessionUsageInput {
   model?: string | null
   provider?: string | null
   usageScope?: 'model_call' | 'run'
+  contextHistoryRevision?: number
+  contextNativeSessionId?: string
   purpose?: string
   apiCalls?: number
   usage?: unknown
@@ -53,6 +55,47 @@ function usagePayload(value: unknown): Record<string, any> {
     || asRecord(response?.usage)
     || asRecord(result?.usage)
     || root
+}
+
+function positiveToken(value: unknown): number {
+  const token = Number(value || 0)
+  return Number.isFinite(token) && token > 0 ? Math.floor(token) : 0
+}
+
+/**
+ * Context occupied by a single model call.
+ *
+ * Providers report the prompt they actually received in three buckets: the
+ * fresh input tokens plus the prefix served from (cache read) or written to
+ * (cache write) their prompt cache, and `normalizeTokenUsage` keeps them apart
+ * so cost accounting can price them differently. Reading input+output alone
+ * therefore reports only the uncached slice — on a warm coding-agent session
+ * that is 1-3% of the real prompt, which is why the context bar sat near zero
+ * and never warned before a turn overran the model's window.
+ *
+ * Reasoning tokens are deliberately left out: providers already count them
+ * inside output tokens, so adding them would double-count.
+ */
+export function contextTokensFromModelCall(usage: {
+  inputTokens?: unknown
+  outputTokens?: unknown
+  cacheReadTokens?: unknown
+  cacheWriteTokens?: unknown
+}): { inputTokens: number; outputTokens: number } {
+  return {
+    inputTokens: positiveToken(usage.inputTokens)
+      + positiveToken(usage.cacheReadTokens)
+      + positiveToken(usage.cacheWriteTokens),
+    outputTokens: positiveToken(usage.outputTokens),
+  }
+}
+
+export function recordSessionContextUsage(sessionId: string, contextTokens: number): void {
+  try {
+    saveContextUsage(sessionId, contextTokens)
+  } catch (err) {
+    logger.warn({ err, sessionId }, '[usage-recorder] failed to persist context measurement')
+  }
 }
 
 export function normalizeTokenUsage(
@@ -137,6 +180,8 @@ export function recordSessionUsage(input: RecordSessionUsageInput): NormalizedTo
       source: input.source,
       agent: input.agent,
       usageScope: input.usageScope,
+      contextHistoryRevision: input.contextHistoryRevision,
+      contextNativeSessionId: input.contextNativeSessionId,
       purpose: input.purpose,
       apiCalls: input.apiCalls,
       inputTokens: usage.inputTokens,

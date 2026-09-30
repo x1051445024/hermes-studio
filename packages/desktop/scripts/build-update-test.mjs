@@ -14,8 +14,8 @@ const { validateTestUpdateUrl, resolveDesktopUpdateSource } = require('../dist/m
 const { load: loadYaml } = require('js-yaml')
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const targets = {
-  'darwin-arm64': { platform: 'darwin', args: ['--mac', 'dmg', 'zip', '--arm64'], resources: 'mac-arm64/Ekko Studio.app/Contents/Resources', manifest: 'latest-mac.yml' },
-  'darwin-x64': { platform: 'darwin', args: ['--mac', 'dmg', 'zip', '--x64'], resources: 'mac/Ekko Studio.app/Contents/Resources', manifest: 'latest-mac.yml' },
+  'darwin-arm64': { platform: 'darwin', args: ['--mac', 'dmg', 'zip', '--arm64'], resources: 'mac-arm64/Hermes Studio.app/Contents/Resources', manifest: 'latest-mac.yml' },
+  'darwin-x64': { platform: 'darwin', args: ['--mac', 'dmg', 'zip', '--x64'], resources: 'mac/Hermes Studio.app/Contents/Resources', manifest: 'latest-mac.yml' },
   'win32-x64': { platform: 'win32', args: ['--win', 'nsis', '--x64'], resources: 'win-unpacked/resources', manifest: 'latest.yml' },
   'linux-x64': { platform: 'linux', args: ['--linux', 'AppImage', '--x64'], resources: 'linux-unpacked/resources', manifest: 'latest-linux.yml' },
   'linux-arm64': { platform: 'linux', args: ['--linux', 'AppImage', '--arm64'], resources: 'linux-arm64-unpacked/resources', manifest: 'latest-linux-arm64.yml' },

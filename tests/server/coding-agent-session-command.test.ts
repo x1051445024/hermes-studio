@@ -81,7 +81,12 @@ describe('coding agent session commands', () => {
     vi.resetAllMocks()
     addMessageMock.mockReturnValue(1)
     getOrCreateSessionMock.mockReturnValue({ messages: [], isWorking: false })
-    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 10, outputTokens: 20 })
+    calcAndUpdateUsageMock.mockResolvedValue({
+      inputTokens: 10,
+      outputTokens: 20,
+      contextInputTokens: 10,
+      contextOutputTokens: 20,
+    })
     getModelContextLengthMock.mockReturnValue(256_000)
   })
 
@@ -158,6 +163,51 @@ describe('coding agent session commands', () => {
     expect(emitted.find(item => item.event === 'session.command')?.payload).toMatchObject({ ok: false, compacted: false, messageKey: 'nativeCompactUnavailable' })
     expect(compactMock).not.toHaveBeenCalled()
     expect(startCodingAgentRunMock).not.toHaveBeenCalled()
+  })
+
+  it('uses the latest request context for /context but accumulated totals for /usage', async () => {
+    calcAndUpdateUsageMock.mockResolvedValue({
+      inputTokens: 1_000,
+      outputTokens: 200,
+      contextInputTokens: 40,
+      contextOutputTokens: 10,
+    })
+    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
+
+    const contextSocket = makeSocket()
+    await handleCodingAgentSessionCommand(
+      contextSocket.nsp,
+      contextSocket.socket as any,
+      { session_id: 'session-1', model: 'test-model', provider: 'openrouter' },
+      { name: 'context', rawName: 'context', args: '' },
+      'default',
+      new Map(),
+    )
+    const context = contextSocket.emitted.find(item => item.event === 'session.command')?.payload
+    expect(context).toMatchObject({
+      action: 'context',
+      inputTokens: 40,
+      outputTokens: 10,
+      totalTokens: 50,
+    })
+    expect(JSON.stringify(context)).not.toContain('1000')
+
+    const usageSocket = makeSocket()
+    await handleCodingAgentSessionCommand(
+      usageSocket.nsp,
+      usageSocket.socket as any,
+      { session_id: 'session-1', model: 'test-model', provider: 'openrouter' },
+      { name: 'usage', rawName: 'usage', args: '' },
+      'default',
+      new Map(),
+    )
+    const usage = usageSocket.emitted.find(item => item.event === 'session.command')?.payload
+    expect(usage).toMatchObject({
+      action: 'usage',
+      inputTokens: 1_000,
+      outputTokens: 200,
+      totalTokens: 1_200,
+    })
   })
 
   it('uses native Pi RPC stats for context and usage', async () => {

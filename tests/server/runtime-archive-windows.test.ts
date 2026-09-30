@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { spawn } from 'node:child_process'
 import * as tar from 'tar'
+import { relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { extractTarGzipArchive } from '../../packages/server/src/modules/hermes/services/runtime/runtime-archive'
 
@@ -28,7 +29,10 @@ describe('Windows runtime archive fallback', () => {
 
   it('uses native tar first and passes paths as separate arguments', async () => {
     const pending = extractTarGzipArchive(archive, target)
-    expect(spawn).toHaveBeenCalledWith('tar.exe', ['-xzf', archive, '-C', target], {
+    // Extraction runs with cwd = target and a RELATIVE archive path so both
+    // GNU tar and bundled bsdtar accept the invocation (see runtime-archive.ts).
+    expect(spawn).toHaveBeenCalledWith('tar.exe', ['-xzf', relative(target, archive)], {
+      cwd: target,
       stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
     })
     child.emit('close', 0, null)

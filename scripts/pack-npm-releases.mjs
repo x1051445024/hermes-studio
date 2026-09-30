@@ -5,7 +5,20 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Build once, then pack both identities without changing the source manifest.
-export function packNpmReleases(rootDir, outputDir, npmCli = process.env.npm_execpath) {
+function defaultNpmCli() {
+  // `npm run` sets npm_execpath; direct `node scripts/...` invocations do not,
+  // so fall back to the npm CLI that ships with the running Node installation.
+  if (process.env.npm_execpath) return process.env.npm_execpath
+  try {
+    const { existsSync: fsExists } = require('node:fs')
+    const { dirname: pathDirname, join: pathJoin } = require('node:path')
+    const bundled = pathJoin(pathDirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (fsExists(bundled)) return bundled
+  } catch {}
+  return undefined
+}
+
+export function packNpmReleases(rootDir, outputDir, npmCli = defaultNpmCli()) {
   if (!npmCli) throw new Error('Run this script with npm run pack:npm -- <output-directory>')
   const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
   if (pkg.name !== 'ekko-studio' || pkg.private) throw new Error('Expected the public ekko-studio source package')

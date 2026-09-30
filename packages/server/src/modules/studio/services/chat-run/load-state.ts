@@ -5,7 +5,7 @@ import {
 import { getRecordedUsageTotals, getUsage } from '../../repositories/usage-store'
 import { logger } from '../../public/logging'
 import { handleMessage } from './message-format'
-import { estimateUsageTokensFromMessages } from './usage'
+import { getRecordedContextUsage, estimateUsageTokensFromMessages } from './usage'
 import type { ChatRunSource, SessionState } from './types'
 
 function restoreBackgroundDelegations(messages: any[]): SessionState['backgroundDelegations'] {
@@ -79,9 +79,12 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
     const hasPersistedUsage = !!latestUsage || totals.inputTokens > 0 || totals.outputTokens > 0
     inputTokens = hasPersistedUsage ? totals.inputTokens : pageUsage.inputTokens
     outputTokens = hasPersistedUsage ? totals.outputTokens : pageUsage.outputTokens
+    // Seed the context bar from the last model call, cached prefix included —
+    // otherwise a reopened session reads near-zero until the next turn lands.
     // Cursor reports aggregate turn usage, not a current context snapshot.
-    if (latestUsage && session?.agent !== 'cursor') {
-      contextTokens = Number(latestUsage.input_tokens || 0) + Number(latestUsage.output_tokens || 0)
+    const contextUsage = getRecordedContextUsage(sid)
+    if (contextUsage && session?.agent !== 'cursor') {
+      contextTokens = contextUsage.inputTokens + contextUsage.outputTokens
     }
 
     logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)

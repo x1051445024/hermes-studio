@@ -1118,10 +1118,14 @@ export class AgentClient implements GroupAgentExecutor {
                 'The authorization expires when this run finishes. Never repeat the token in chat output.',
             ].join('\n'))
         }
+        // When the room owner has enabled full local access for this room, non-owner
+        // requests are intentionally NOT scoped to a workspace: local agents run with
+        // the same file access as the owner. This is a per-room, owner-only decision.
         if (
             msg?.targetOwnerMemberId
             && msg.senderId
             && msg.senderId !== msg.targetOwnerMemberId
+            && !Number(room?.fullLocalAccess || 0)
         ) {
             promptParts.push(buildNonOwnerRequestSecurityPrompt({
                 requesterName: msg.senderName,

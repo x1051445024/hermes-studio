@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'

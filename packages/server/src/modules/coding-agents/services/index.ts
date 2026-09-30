@@ -314,6 +314,12 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
   baseUrl?: string
   apiKey?: string
   apiMode?: ApiMode
+  /** Extra request headers (JSON object) configured on the selected provider. */
+  extraHeaders?: Record<string, string>
+  /** Provider switch: forward the spawned CLI's own identity headers upstream. */
+  preserveClientIdentity?: boolean
+  /** Provider-level egress proxy for coding-agent upstream requests. */
+  proxyUrl?: string
   reasoningEffort?: string
   sessionId?: string
   agentSessionId?: string
@@ -769,6 +775,16 @@ function belongsToDifferentBuiltinProvider(provider: string, baseUrl: string): b
   ))
 }
 
+function normalizeExtraHeaderMap(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, string> = {}
+  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
+    const key = String(name || '').trim()
+    if (key && typeof headerValue === 'string') out[key] = headerValue
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 async function resolveStoredProviderLaunchInput(
   input: CodingAgentLaunchInput & { sessionId: string },
   existingSession: HermesSessionRow | null,
@@ -791,14 +807,19 @@ async function resolveStoredProviderLaunchInput(
     return { ...input, profile, provider, model, workspace, ...openCodeFreeRuntime(model) }
   }
   let canonicalProvider = provider
+  let extraHeaders = normalizeExtraHeaderMap(input.extraHeaders)
+  let preserveClientIdentity = input.preserveClientIdentity === true
+  let proxyUrl = normalizeProxyUrl(input.proxyUrl)
   const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
   if (ignoredStaleProviderRuntime) {
     baseUrl = ''
     apiKey = ''
   }
 
-  if (!provider || (baseUrl && apiKey && apiMode)) {
-    return { ...input, profile, provider: provider || input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode }
+  // Provider-level `extra_headers` must be re-read from the config on every
+  // launch, so a complete runtime triple no longer short-circuits resolution.
+  if (!provider) {
+    return { ...input, profile, provider: input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode, ...(extraHeaders ? { extraHeaders } : {}), ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}), ...(proxyUrl ? { proxyUrl } : {}) }
   }
 
   let config: Record<string, any> = {}
@@ -829,6 +850,11 @@ async function resolveStoredProviderLaunchInput(
         preset?.api_mode || inferLaunchApiMode(canonicalProvider, baseUrl, 'chat_completions'),
       )
     }
+    const configuredHeaders = normalizeExtraHeaderMap(customEntry.extra_headers)
+    if (configuredHeaders) extraHeaders = { ...(extraHeaders || {}), ...configuredHeaders }
+    if (customEntry.preserve_client_identity === true) preserveClientIdentity = true
+    const configuredProxyUrl = normalizeProxyUrl(customEntry.proxy_url)
+    if (configuredProxyUrl) proxyUrl = configuredProxyUrl
   }
 
   const canonicalProviderKey = providerKeyWithoutCustomPrefix(canonicalProvider)
@@ -858,7 +884,15 @@ async function resolveStoredProviderLaunchInput(
     baseUrl: baseUrl || (ignoredStaleProviderRuntime ? '' : input.baseUrl),
     apiKey: apiKey || (ignoredStaleProviderRuntime ? '' : input.apiKey),
     apiMode,
+    ...(extraHeaders ? { extraHeaders } : {}),
+    ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}),
+    ...(proxyUrl ? { proxyUrl } : {}),
   }
+}
+
+function normalizeProxyUrl(value: unknown): string | undefined {
+  const trimmed = String(value ?? '').trim()
+  return trimmed || undefined
 }
 
 function normalizeStoredLaunchApiMode(value: unknown): ApiMode | undefined {
@@ -1518,7 +1552,7 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>): 
     sectionBlocks,
     featureLines: [...featureLines.values()],
   }
-}
+} 
 
 function codexMcpConfigToml(
   profile: string,
@@ -2094,6 +2128,9 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
           agentId: 'pi',
           agentSessionId,
           chatSessionId,
+          extraHeaders: resolved.extraHeaders,
+          preserveClientIdentity: resolved.preserveClientIdentity,
+          proxyUrl: resolved.proxyUrl,
         }, apiKey, token)
         await atomicWritePrivateFile(targetPath, content)
       } catch {
@@ -2226,6 +2263,9 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
         agentId: config.agentId,
         agentSessionId,
         chatSessionId,
+        extraHeaders: resolved.extraHeaders,
+        preserveClientIdentity: resolved.preserveClientIdentity,
+        proxyUrl: resolved.proxyUrl,
       }, token)
       restoredRouteKeys.add(routeKey)
       restoredCount += 1
@@ -3542,6 +3582,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,
           chatSessionId: isolatedInput.sessionId,
+          extraHeaders: input.extraHeaders,
+          preserveClientIdentity: input.preserveClientIdentity,
+          proxyUrl: input.proxyUrl,
         })
       : null
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -3617,6 +3660,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,
           chatSessionId: isolatedInput.sessionId,
+          extraHeaders: input.extraHeaders,
+          preserveClientIdentity: input.preserveClientIdentity,
+          proxyUrl: input.proxyUrl,
         })
       : null
     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -3713,6 +3759,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,
           chatSessionId: isolatedInput.sessionId,
+          extraHeaders: input.extraHeaders,
+          preserveClientIdentity: input.preserveClientIdentity,
+          proxyUrl: input.proxyUrl,
         })
       : null
     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
@@ -3789,6 +3838,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,
           chatSessionId: isolatedInput.sessionId,
+          extraHeaders: input.extraHeaders,
+          preserveClientIdentity: input.preserveClientIdentity,
+          proxyUrl: input.proxyUrl,
         })
       : null
     const baseConfigRoot = getScopedConfigRoot(tool.id, scope)
@@ -3837,6 +3889,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
     const proxyTarget = registerCodexProxyTarget({
       profile: scope.profile, provider, model, baseUrl, apiKey, apiMode, reasoningEffort,
       agentId: tool.id, agentSessionId: isolatedInput.agentSessionId, chatSessionId: isolatedInput.sessionId,
+      extraHeaders: input.extraHeaders,
+      preserveClientIdentity: input.preserveClientIdentity,
+      proxyUrl: input.proxyUrl,
     })
     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
     const prepared = await prepareDshRuntime({
@@ -3870,6 +3925,9 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           agentId: tool.id,
           agentSessionId: isolatedInput.agentSessionId,
           chatSessionId: isolatedInput.sessionId,
+          extraHeaders: input.extraHeaders,
+          preserveClientIdentity: input.preserveClientIdentity,
+          proxyUrl: input.proxyUrl,
         })
       : null
     const baseRuntime = await ensureOpenCodeScopedBaseConfigFiles(scope, scopedSystemPrompt, workspaceDir)

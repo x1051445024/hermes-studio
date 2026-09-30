@@ -47,6 +47,7 @@ import {
     clearRoomContext,
     updateInviteCode as updateInviteCodeApi,
     updateRoomWorkspace as updateRoomWorkspaceApi,
+    updateRoomFullLocalAccess as updateRoomFullLocalAccessApi,
 } from '@/api/studio/group-chat'
 import {
     getGroupChatAttachmentUrl,
@@ -1713,6 +1714,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         }
     }
 
+    async function setRoomFullLocalAccess(roomId: string, enabled: boolean) {
+        try {
+            const res = await updateRoomFullLocalAccessApi(roomId, enabled)
+            if (res.room) upsertRoom(res.room)
+            return res.room
+        } catch (err: any) {
+            error.value = err.message
+            throw err
+        }
+    }
+
     async function setRoomInviteCode(roomId: string, inviteCode: string) {
         const nextCode = inviteCode.trim()
         if (!nextCode) throw new Error('inviteCode is required')
@@ -2076,6 +2088,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
         cloneRoom,
         clearCurrentRoomContext,
         setRoomWorkspace,
+        setRoomFullLocalAccess,
         setRoomInviteCode,
         loadAgents,
         addAgentToRoom,

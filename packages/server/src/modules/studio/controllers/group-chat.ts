@@ -240,6 +240,9 @@ export function serializeRoom(room: any, includeManageFields: boolean, canMentio
     if (Object.prototype.hasOwnProperty.call(room, 'workspace')) {
         serialized.workspace = includeManageFields ? String(room.workspace || '') : ''
     }
+    if (Object.prototype.hasOwnProperty.call(room, 'fullLocalAccess')) {
+        serialized.fullLocalAccess = includeManageFields ? Number(room.fullLocalAccess || 0) : 0
+    }
     return serialized
 }
 
@@ -1489,6 +1492,54 @@ export async function listRoomHandoffs(ctx: any) {
 }
 
 // Update room workspace
+// Update room full-local-access switch (owner-only, per-room).
+export async function updateRoomFullLocalAccess(ctx: any) {
+    if (!chatServer) {
+        ctx.status = 503
+        ctx.body = { error: 'Group chat not initialized' }
+        return
+    }
+
+    const storage = chatServer.getStorage()
+    const roomId = ctx.params.roomId
+    const room = storage.getRoom(roomId)
+    if (!room) {
+        ctx.status = 404
+        ctx.body = { error: 'Room not found' }
+        return
+    }
+    if (!canManageRoom(storage, roomId, ctx.state?.user)) {
+        ctx.status = 403
+        ctx.body = { error: 'Access denied' }
+        return
+    }
+
+    const { enabled } = ctx.request.body as { enabled?: unknown }
+    if (typeof enabled !== 'boolean') {
+        ctx.status = 400
+        ctx.body = { error: 'enabled must be a boolean' }
+        return
+    }
+
+    const next = enabled ? 1 : 0
+    if (Number(room.fullLocalAccess || 0) !== next) {
+        const releaseSessionFence = chatServer.fenceCurrentRoomAgentSessions(roomId)
+        try {
+            await chatServer.agentClients.interruptRoom(roomId)
+        } catch (err) {
+            releaseSessionFence()
+            throw err
+        }
+    }
+    ctx.body = {
+        room: serializeRoom(
+            storage.updateRoomFullLocalAccess(roomId, enabled),
+            true,
+            isGroupChatRoomOwner(storage, roomId, ctx.state?.user),
+        ),
+    }
+}
+
 export async function updateRoomWorkspace(ctx: any) {
     if (!chatServer) {
         ctx.status = 503

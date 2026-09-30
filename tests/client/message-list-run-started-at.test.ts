@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
  * drags in the whole chat surface.
  */
 describe('thinking timer watcher', () => {
-  const source = readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8')
+  const source = readFileSync('packages/client/src/components/hermes/chat/MessageList.vue', 'utf8').replace(/\r\n/g, '\n')
 
   it('restarts when the session or its reported start changes, not only when the indicator flips', () => {
     const watched = source.slice(source.indexOf('watch(\n  // Switching between two sessions'))

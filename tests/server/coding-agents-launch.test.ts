@@ -389,6 +389,8 @@ describe('coding agent launch preparation', () => {
         'https://api.example.com/v1',
         `${agentId}-agent-session`,
         `${agentId}-chat-session`,
+        // Patch 0002: registration keys carry a trailing preserve-client-identity slot.
+        '',
       ])).toString('base64url')
       const token = `hwui_${suffix}`
       const configPath = join(
@@ -407,7 +409,7 @@ describe('coding agent launch preparation', () => {
         'model_provider = "custom"',
         '',
         '[model_providers.custom]',
-        `base_url = "http://127.0.0.1:8648/api/codex-proxy/${routeKey}/v1"`,
+        `base_url = "http://127.0.0.1:8787/api/codex-proxy/${routeKey}/v1"`,
         'requires_openai_auth = false',
         `experimental_bearer_token = ${JSON.stringify(token)}`,
         '',
@@ -429,6 +431,7 @@ describe('coding agent launch preparation', () => {
         'https://api.example.com/v1',
         `${agentId}-agent-session`,
         `${agentId}-chat-session`,
+        '',
       ])).toString('base64url')
       expect(isAuthorizedCodexProxyRequest(makeProxyContext(routeKey, `hwui_${suffix}`, {}))).toBe(true)
     }
@@ -488,6 +491,47 @@ describe('coding agent launch preparation', () => {
     expect(providerIndex).toBeLessThan(providerSectionIndex)
     expect(providerSectionIndex).toBeLessThan(hooksSectionIndex)
     expect(config.slice(0, config.indexOf('\n['))).toContain('model = "codex-model"')
+  })
+
+  it('keeps Codex array-of-table hooks out of the features table', async () => {
+    const home = makeHome()
+    const globalConfigPath = join(home, 'global-home', '.codex', 'config.toml')
+    mkdirSync(dirname(globalConfigPath), { recursive: true })
+    writeFileSync(globalConfigPath, [
+      '[features]',
+      'goals = true',
+      'hooks = true',
+      'js_repl = false',
+      '',
+      '[[hooks.SessionStart]]',
+      'matcher = "startup|resume|clear|compact"',
+      '',
+      '[[hooks.SessionStart.hooks]]',
+      "command = 'node \"/opt/agent-extensions/token-saver/agent-token-saver-hook.mjs\"'",
+      'timeout = 5',
+      'type = "command"',
+      '',
+    ].join('\n'))
+
+    const launch = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'custom:test',
+      model: 'codex-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'test-key',
+      apiMode: 'codex_responses',
+      sessionId: 'codex-array-table-session',
+      agentSessionId: 'codex-array-table-agent-session',
+    })
+    const config = readFileSync(join(launch.rootDir, 'config.toml'), 'utf-8')
+    const featureIndex = config.indexOf('[features]')
+    const featureBlock = config.slice(featureIndex)
+
+    expect(config).toContain('[[hooks.SessionStart]]')
+    expect(config).toContain('[[hooks.SessionStart.hooks]]')
+    expect(featureBlock).toContain('goals = true')
+    expect(featureBlock).not.toContain('matcher = "startup|resume|clear|compact"')
+    expect(featureBlock).not.toContain('type = "command"')
   })
 
   it.each([
@@ -1797,6 +1841,11 @@ describe('coding agent launch preparation', () => {
       provider: 'openrouter',
       model: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
     })))
+    // The temp test home seeds no models.dev catalog, so this model falls back
+    // to DEFAULT_CONTEXT_LENGTH (256k): trigger 128k / native window 256k = 50%.
+    // (The 0.7.25 port expected 16% only because the then-loader read the real
+    // user cache at ~/.hermes/models_dev_cache.json, which leaked 32k for this
+    // model; 0.7.26 upstream scopes the catalog to config.appHome.)
     expect(settings.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe('50')
     expect(settings.env.ENABLE_TOOL_SEARCH).toBe('true')
     expect(settings.env).toMatchObject({
@@ -2497,7 +2546,7 @@ describe('coding agent launch preparation', () => {
     })
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
-    expect(config).toContain(`base_url = "http://127.0.0.1:8648/api/codex-proxy/`)
+    expect(config).toContain(`base_url = "http://127.0.0.1:8787/api/codex-proxy/`)
     expect(config).toContain('wire_api = "responses"')
     expect(config).toContain('requires_openai_auth = false')
     expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
@@ -2584,7 +2633,7 @@ describe('coding agent launch preparation', () => {
     })
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
-    expect(config).toContain(`base_url = "http://127.0.0.1:8648/api/codex-proxy/`)
+    expect(config).toContain(`base_url = "http://127.0.0.1:8787/api/codex-proxy/`)
     expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
     expect(config).not.toContain('base_url = "https://api.openai.com/v1"')
     expect(dirname(dirname(result.rootDir))).toBe(join(home, 'coding-agent', 'model', 'default', 'openai-api', 'codex'))
@@ -2603,7 +2652,7 @@ describe('coding agent launch preparation', () => {
     })
 
     const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
-    expect(config).toContain(`base_url = "http://127.0.0.1:8648/api/codex-proxy/`)
+    expect(config).toContain(`base_url = "http://127.0.0.1:8787/api/codex-proxy/`)
     expect(config).toContain('wire_api = "responses"')
     expect(config).toContain('requires_openai_auth = false')
     expect(config).toMatch(/experimental_bearer_token = "hwui_[^"]+"/)
@@ -3811,8 +3860,8 @@ describe('coding agent launch preparation', () => {
       'base64url',
     ).toString('utf-8'))
 
-    expect(decodeTarget(firstSettings.env.ANTHROPIC_BASE_URL).slice(-2)).toEqual(['agent-one', 'chat-one'])
-    expect(decodeTarget(secondSettings.env.ANTHROPIC_BASE_URL).slice(-2)).toEqual(['agent-two', 'chat-two'])
+    expect(decodeTarget(firstSettings.env.ANTHROPIC_BASE_URL).slice(-3)).toEqual(['agent-one', 'chat-one', ''])
+    expect(decodeTarget(secondSettings.env.ANTHROPIC_BASE_URL).slice(-3)).toEqual(['agent-two', 'chat-two', ''])
   })
 
   it('keeps Codex proxy routes separate for the same model with different upstream URLs', () => {

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { relative } from 'node:path'
 import * as tar from 'tar'
 
 const MAX_ERROR_LENGTH = 16 * 1024
@@ -10,7 +11,17 @@ function appendError(current: string, chunk: Buffer | string): string {
 
 function extractWithWindowsTar(archive: string, targetRoot: string): Promise<boolean> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn('tar.exe', ['-xzf', archive, '-C', targetRoot], {
+    // Two tar flavors can resolve as `tar.exe` on Windows, and neither accepts
+    // every argument form:
+    //   - GNU tar (Git for Windows) parses any absolute 'C:<...>' path as
+    //     host:path (either slash style) without --force-local, and mangles
+    //     backslash -C directories even with it.
+    //   - bsdtar (bundled System32 tar.exe) rejects --force-local outright.
+    // Running with cwd = targetRoot and a RELATIVE archive path sidesteps
+    // absolute-path parsing entirely and works on both flavors (verified
+    // against GNU tar 1.35 and bsdtar 3.5.2).
+    const child = spawn('tar.exe', ['-xzf', relative(targetRoot, archive)], {
+      cwd: targetRoot,
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     })

@@ -37,7 +37,9 @@ function restoreSeen() {
 }
 
 function isPageVisible() {
-  return document.visibilityState !== 'hidden'
+  // Test/SSR environments can mount this component without a DOM; treat a
+  // missing document as "not visible" so the check simply no-ops.
+  return typeof document !== 'undefined' && document.visibilityState !== 'hidden'
 }
 
 async function checkAnnouncements() {
@@ -89,12 +91,16 @@ function confirm() {
 onMounted(() => {
   mounted = true
   void checkAnnouncements()
+  // Environments without window/document (test runners mounting via App.vue
+  // after teardown) must not throw during listener registration.
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
   window.addEventListener('focus', checkAnnouncements)
   document.addEventListener('visibilitychange', checkAnnouncements)
 })
 
 onBeforeUnmount(() => {
   mounted = false
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
   window.removeEventListener('focus', checkAnnouncements)
   document.removeEventListener('visibilitychange', checkAnnouncements)
 })

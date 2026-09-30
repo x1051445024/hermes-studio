@@ -7,12 +7,14 @@ import {
   getSessionDetail,
 } from '../../repositories/session-store'
 import { deleteCompressionSnapshot, getCompressionSnapshot } from '../../repositories/compression-snapshot'
-import { getRecordedUsageTotals, getUsage } from '../../repositories/usage-store'
+import { getContextUsage, getRecordedUsageTotals, getLatestModelCallUsage, getUsage } from '../../repositories/usage-store'
+import { contextTokensFromModelCall } from '../usage/usage-recorder'
 import { countTokens, SUMMARY_PREFIX } from '../context-compressor'
 import { truncateToolResultForContext } from './tool-result-context'
 import { projectChatBrowserHistory } from '../../public/chat-agent-runtime'
 import { logger } from '../../public/logging'
 import { assembleCursorSnapshotHistory, readCursorSnapshotParts } from './context-history'
+import type { UsageRecord } from '../../repositories/usage-store'
 import type { SessionState } from './types'
 
 type UsageTokenMessage = {
@@ -78,6 +80,39 @@ function storedReasoningTokenEstimate(details: unknown): number | undefined {
     : undefined
 }
 
+/** {@link contextTokensFromModelCall} over a persisted usage row. */
+export function contextTokensFromUsageRecord(
+  record: UsageRecord | undefined,
+): { inputTokens: number; outputTokens: number } | undefined {
+  if (!record) return undefined
+  return contextTokensFromModelCall({
+    inputTokens: record.input_tokens,
+    outputTokens: record.output_tokens,
+    cacheReadTokens: record.cache_read_tokens,
+    cacheWriteTokens: record.cache_write_tokens,
+  })
+}
+
+export function getRecordedContextUsage(sid: string): { inputTokens: number; outputTokens: number } | undefined {
+  let call: UsageRecord | undefined
+  let snapshot: ReturnType<typeof getContextUsage>
+  try {
+    call = getLatestModelCallUsage(sid)
+  } catch (err) {
+    logger.warn({ err, sessionId: sid }, '[chat-run-socket] failed to read per-call context')
+  }
+  try {
+    snapshot = getContextUsage(sid)
+  } catch (err) {
+    logger.warn({ err, sessionId: sid }, '[chat-run-socket] failed to read context snapshot')
+  }
+  if (snapshot && (!call || snapshot.updatedAt >= (call.created_at || 0))) {
+    // Native measurements supply a total, not a billable input/output split.
+    return { inputTokens: snapshot.contextTokens, outputTokens: 0 }
+  }
+  return contextTokensFromUsageRecord(call)
+}
+
 export async function calcAndUpdateUsage(
   sid: string,
   state: SessionState,
@@ -99,6 +134,9 @@ export async function calcAndUpdateUsage(
   try {
     if (options.nativeSource) {
       const totals = getRecordedUsageTotals(sid, options.nativeSource)
+      // totals are lifetime cost counters; the last call is what still occupies
+      // the window, so context comes from that row rather than from the sums.
+      const contextUsage = getRecordedContextUsage(sid)
       const latest = getUsage(sid, options.nativeSource)
       const usage = {
         inputTokens: totals.inputTokens,
@@ -121,14 +159,25 @@ export async function calcAndUpdateUsage(
         ...usage,
         nativeUsageAvailable: Boolean(latest),
         nativeModel: latest?.model || '',
-        ...(latest
+        ...(contextUsage
           ? {
-              // Accounting keeps ordinary and cached input disjoint, but both
-              // occupy the model's context window.
-              contextInputTokens: Number(latest.input_tokens || 0) + Number(latest.cache_read_tokens || 0) + Number(latest.cache_write_tokens || 0),
-              contextOutputTokens: Number(latest.output_tokens || 0),
+              contextInputTokens: contextUsage.inputTokens,
+              contextOutputTokens: contextUsage.outputTokens,
             }
           : {}),
+        // Global native turns (Codex/Grok CLI aggregates) record only run-scope
+        // rows, which carry no per-call context reading. Surface the cached-
+        // inclusive latest row of any scope so the context bar keeps updating
+        // for them; run-scope sums are clearly labelled by the bar's own
+        // caveat when they exceed the window.
+        ...(contextUsage
+          ? {}
+          : latest && (Number(latest.input_tokens || 0) + Number(latest.cache_read_tokens || 0) + Number(latest.cache_write_tokens || 0) + Number(latest.output_tokens || 0)) > 0
+            ? {
+                contextInputTokens: Number(latest.input_tokens || 0) + Number(latest.cache_read_tokens || 0) + Number(latest.cache_write_tokens || 0),
+                contextOutputTokens: Number(latest.output_tokens || 0),
+              }
+            : {}),
       }
     }
 

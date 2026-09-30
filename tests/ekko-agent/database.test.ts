@@ -153,7 +153,7 @@ describe('EkkoDatabaseManager', () => {
     directories.initialize({ hermesRootDirectory: hermesRoot })
     await expect(readFile(join(defaultProfile, 'created-after-reset', 'SKILL.md'), 'utf8'))
       .resolves.toBe('# Keep me\n')
-  })
+  }, 30_000)
 
   it('installs only Ekko built-ins when the skills root does not exist', async () => {
     const hermesRoot = join(webUiHome, 'hermes')

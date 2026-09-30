@@ -8,6 +8,8 @@ const getCompressionSnapshotMock = vi.fn()
 const deleteCompressionSnapshotMock = vi.fn()
 const getRecordedUsageTotalsMock = vi.fn()
 const getUsageMock = vi.fn()
+const getLatestModelCallUsageMock = vi.fn()
+const getContextUsageMock = vi.fn()
 
 vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSessionDetail: getSessionDetailMock,
@@ -22,8 +24,11 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
 }))
 
 vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
+  updateUsage: vi.fn(),
   getRecordedUsageTotals: getRecordedUsageTotalsMock,
   getUsage: getUsageMock,
+  getLatestModelCallUsage: getLatestModelCallUsageMock,
+  getContextUsage: getContextUsageMock,
 }))
 
 vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
@@ -33,6 +38,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
 describe('cursor-aware chat usage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getContextUsageMock.mockReturnValue(undefined)
     getSessionMock.mockReturnValue({ id: 'session-1', history_revision: 0 })
     getSessionDetailMock.mockImplementation(() => {
       throw new Error('full history must not be read')
@@ -82,6 +88,15 @@ describe('cursor-aware chat usage', () => {
   it('uses native Coding Agent usage without consulting messages or compression snapshots', async () => {
     getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 100, outputTokens: 40, cacheReadTokens: 50, cacheWriteTokens: 5 })
     getUsageMock.mockReturnValue({ input_tokens: 70, output_tokens: 10, model: 'native-model', cache_read_tokens: 20, cache_write_tokens: 3 })
+    // Lifetime totals are cost counters; the window holds the last call only,
+    // cached prefix included.
+    getLatestModelCallUsageMock.mockReturnValue({
+      input_tokens: 70,
+      output_tokens: 10,
+      cache_read_tokens: 6_000,
+      cache_write_tokens: 500,
+      usage_scope: 'model_call',
+    })
     const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
     const state: any = { messages: [], events: [], queue: [], isWorking: false }
 
@@ -97,7 +112,7 @@ describe('cursor-aware chat usage', () => {
       nativeModel: 'native-model',
       cacheReadTokens: 50,
       cacheWriteTokens: 5,
-      contextInputTokens: 93,
+      contextInputTokens: 6_570,
       contextOutputTokens: 10,
     })
     expect(state).toMatchObject({ inputTokens: 100, outputTokens: 40, cacheReadTokens: 50, cacheWriteTokens: 5 })
@@ -107,6 +122,48 @@ describe('cursor-aware chat usage', () => {
     expect(getCompressionSnapshotMock).not.toHaveBeenCalled()
     expect(getSessionDetailMock).not.toHaveBeenCalled()
     expect(getSessionContextMessagesMock).not.toHaveBeenCalled()
+  })
+
+  it('uses a newer native snapshot after compaction without changing lifetime totals', async () => {
+    getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 900_000, outputTokens: 40_000 })
+    getLatestModelCallUsageMock.mockReturnValue({
+      input_tokens: 100_000, output_tokens: 1_000, created_at: 100, usage_scope: 'model_call',
+    })
+    getContextUsageMock.mockReturnValue({ contextTokens: 20_000, updatedAt: 200 })
+    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
+    const state: any = { messages: [], events: [], queue: [], isWorking: false }
+
+    const usage = await calcAndUpdateUsage('session-1', state, vi.fn(), { nativeSource: 'coding_agent' })
+
+    expect(usage.inputTokens).toBe(900_000)
+    expect(usage.outputTokens).toBe(40_000)
+    expect((usage.contextInputTokens || 0) + (usage.contextOutputTokens || 0)).toBe(20_000)
+    expect(getSessionDetailMock).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the latest cached-inclusive row when only run aggregates were recorded', async () => {
+    getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 100, outputTokens: 40 })
+    getLatestModelCallUsageMock.mockReturnValue(undefined)
+    // Global native turns (Codex/Grok) record run-scope aggregates only; the
+    // latest row still seeds the bar with its cached-inclusive totals.
+    getUsageMock.mockReturnValue({ input_tokens: 70, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 3 })
+    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
+    const state: any = { messages: [], events: [], queue: [], isWorking: false }
+
+    const usage = await calcAndUpdateUsage('session-1', state, vi.fn(), {
+      nativeSource: 'coding_agent',
+    })
+
+    expect(usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      nativeUsageAvailable: true,
+      nativeModel: '',
+      contextInputTokens: 93,
+      contextOutputTokens: 10,
+    })
   })
 
   it('does not emit fake zero usage when the native ledger has no row', async () => {

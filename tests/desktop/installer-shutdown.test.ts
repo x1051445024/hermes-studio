@@ -30,7 +30,7 @@ describe('Windows installer shutdown hook', () => {
     const forceStop = script.indexOf('Stop-Process -Id $$_.ProcessId -Force', gracefulDeadline)
 
     expect(script).toContain(`nsExec::ExecToLog '"$INSTDIR\\\${EXE_NAME}" --quit'`)
-    expect(script).toContain('!insertmacro stopStudioExecutable "Ekko Studio.exe" ekko')
+    expect(script).toContain('!insertmacro stopStudioExecutable "Hermes Studio.exe" ekko')
     expect(script).toContain('!insertmacro stopStudioExecutable "Hermes Studio.exe" hermes')
     expect(gracefulDeadline).toBeGreaterThan(-1)
     expect(forceDeadline).toBeGreaterThan(gracefulDeadline)

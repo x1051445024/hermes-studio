@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../studio/public/sessions'
 import type { ApiMode, CodingAgentImageInput } from '../../protocol/types'
 import { logger } from '../../../studio/public/logging'
-import { normalizeTokenUsage, normalizeUsageCost, recordSessionUsage } from '../../../studio/public/usage'
+import { contextTokensFromModelCall, normalizeTokenUsage, normalizeUsageCost, recordSessionContextUsage, recordSessionUsage, type NormalizedTokenUsage } from '../../../studio/public/usage'
 import {
   applyResponseStreamEvent,
   calcAndUpdateUsage,
@@ -166,6 +166,7 @@ interface PiRpcPendingRequest {
 export interface ManagedCodingAgentRun {
   id: string
   launch: CodingAgentRunLaunch
+  contextHistoryRevision: number
   pty?: { pid: number; write: (data: string) => void; kill: (signal?: string) => void; onData: (cb: (data: string) => void) => void; onExit: (cb: (event: { exitCode: number }) => void) => void }
   state: SessionState
   runMarker?: string
@@ -187,6 +188,12 @@ export interface ManagedCodingAgentRun {
   printCompleted?: boolean
   responseStartEmitted?: boolean
   terminalEventHandled?: boolean
+  /**
+   * Set once this turn has persisted per-call `model_call` rows of its own, so
+   * the terminal handler knows not to also write the turn aggregate as a `run`
+   * row — the lifetime totals sum every scope and would count the turn twice.
+   */
+  recordedPerCallUsage?: boolean
   acceptingPrintEvent?: boolean
   printToolBlocks?: Map<number, { id: string; name: string; arguments: string; done: boolean }>
   nativeResumeReady?: boolean
@@ -728,6 +735,7 @@ export class CodingAgentRunManager {
       const run: ManagedCodingAgentRun = {
         id: runId,
         launch,
+        contextHistoryRevision: getSession(launch.sessionId)?.history_revision ?? 0,
         state,
         lastActiveAt: Date.now(),
         startedAt: Date.now(),
@@ -792,6 +800,7 @@ export class CodingAgentRunManager {
     const run: ManagedCodingAgentRun = {
       id: runId,
       launch,
+      contextHistoryRevision: getSession(launch.sessionId)?.history_revision ?? 0,
       pty: proc,
       state,
       lastActiveAt: Date.now(),
@@ -847,6 +856,7 @@ export class CodingAgentRunManager {
     }
     const systemPrompt = String(options.systemPrompt || '').trim()
     this.ensureDbSession(run)
+    run.contextHistoryRevision = getSession(run.launch.sessionId)?.history_revision ?? 0
     run.assistantMessageId = undefined
     const messageId = this.addUserMessage(run, options.storageInput ?? text)
     this.touch(run)
@@ -1111,38 +1121,96 @@ export class CodingAgentRunManager {
   }
 
   handleProxyUsageEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
-    if (!agentSessionId || event.type !== 'response.completed') return
-    const run = this.runs.get(agentSessionId)
-    if (!run || run.launch.mode !== 'scoped') return
-    const final = (event.data as any).response || event.data
-    if (!final?.usage) return
-    const usage = normalizeTokenUsage(final.usage, {}, {
-      inputIncludesCache: run.launch.apiMode !== 'anthropic_messages',
-    })
-    if (usage.isEstimated) {
-      logger.warn({
-        runId: run.id,
+    this.createProxyUsageObserver(agentSessionId)(event)
+  }
+
+  createProxyUsageObserver(agentSessionId: string | undefined): (event: CanonicalResponsesEvent) => void {
+    const activeRun = agentSessionId ? this.runs.get(agentSessionId) : undefined
+    if (!activeRun || activeRun.launch.mode !== 'scoped') return () => {}
+    // Only request-owned accounting metadata survives the live runner.
+    const run = {
+      id: activeRun.id,
+      contextHistoryRevision: activeRun.contextHistoryRevision,
+      launch: {
+        sessionId: activeRun.launch.sessionId,
+        agentId: activeRun.launch.agentId,
+        agentNativeSessionId: activeRun.launch.agentNativeSessionId,
+        apiMode: activeRun.launch.apiMode,
+        provider: activeRun.launch.provider,
+        model: activeRun.launch.model,
+        profile: activeRun.launch.profile,
+      },
+    }
+    return (event) => {
+      if (event.type !== 'response.completed') return
+      const final = (event.data as any).response || event.data
+      if (!final?.usage) return
+      const usage = normalizeTokenUsage(final.usage, {}, {
+        inputIncludesCache: run.launch.apiMode !== 'anthropic_messages',
+      })
+      if (usage.isEstimated) {
+        logger.warn({
+          runId: run.id,
+          sessionId: run.launch.sessionId,
+          responseId: final?.id,
+          provider: run.launch.provider,
+          model: final?.model || run.launch.model,
+        }, '[coding-agent-run] scoped proxy response omitted token usage')
+        return
+      }
+      recordSessionUsage({
         sessionId: run.launch.sessionId,
-        responseId: final?.id,
-        provider: run.launch.provider,
+        runId: final?.id,
+        source: 'coding_agent',
+        agent: usageCodingAgent(run.launch.agentId),
+        usageScope: 'model_call',
+        contextHistoryRevision: run.contextHistoryRevision ?? 0,
+        contextNativeSessionId: run.launch.agentNativeSessionId || '',
+        apiCalls: 1,
+        usage,
+        profile: run.launch.profile,
+        cost: normalizeUsageCost(final),
         model: final?.model || run.launch.model,
-      }, '[coding-agent-run] scoped proxy response omitted token usage')
+        provider: run.launch.provider,
+        isEstimated: false,
+      })
+      // One coding-agent run can span dozens of provider calls. Waiting for the
+      // run to finish before refreshing leaves the context bar showing the
+      // previous turn's number for minutes, so publish each call as it lands.
+      const current = this.runs.get(run.id)
+      if (current && current.contextHistoryRevision === run.contextHistoryRevision
+        && (current.launch.agentNativeSessionId || '') === (run.launch.agentNativeSessionId || '')) {
+        this.publishModelCallContext(current, usage)
+      }
+    }
+  }
+
+  /**
+   * Push an already-measured context size to the session's context bar.
+   *
+   * Persist separately from the billable ledger so native measurements survive
+   * reloads without double-counting the terminal run aggregate.
+   */
+  private publishContextTokens(run: ManagedCodingAgentRun, contextTokens: number | null | undefined) {
+    if (run.exited || run.stoppedByUser) return
+    if (contextTokens == null || !Number.isFinite(contextTokens) || contextTokens <= 0) return
+    try {
+      const session = getSession(run.launch.sessionId)
+      if (!session || session.history_revision !== (run.contextHistoryRevision ?? 0)
+        || session.agent_native_session_id !== (run.launch.agentNativeSessionId || '')) return
+    } catch (err) {
+      logger.warn({ err, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to validate context boundary')
       return
     }
-    recordSessionUsage({
-      sessionId: run.launch.sessionId,
-      runId: final?.id,
-      source: 'coding_agent',
-      agent: usageCodingAgent(run.launch.agentId),
-      usageScope: 'model_call',
-      apiCalls: 1,
-      usage,
-      profile: run.launch.profile,
-      cost: normalizeUsageCost(final),
-      model: final?.model || run.launch.model,
-      provider: run.launch.provider,
-      isEstimated: false,
-    })
+    recordSessionContextUsage(run.launch.sessionId, contextTokens)
+    updateContextTokenUsage(run.launch.sessionId, run.state, (event: string, payload: any) => {
+      this.emitToChat(run.launch.sessionId, event, payload)
+    }, contextTokens)
+  }
+
+  private publishModelCallContext(run: ManagedCodingAgentRun, usage: NormalizedTokenUsage) {
+    const context = contextTokensFromModelCall(usage)
+    this.publishContextTokens(run, context.inputTokens + context.outputTokens)
   }
 
   handleResponseEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
@@ -1222,9 +1290,16 @@ export class CodingAgentRunManager {
     if (isTerminalEvent) {
       run.assistantMessageId = this.persistTerminalResponse(run)
       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
-      if (run.launch.mode !== 'scoped' && !['opencode', 'pi'].includes(run.launch.agentId)) {
+      // Turn aggregate, recorded only when nothing finer was captured: scoped
+      // runs are billed per call by the proxy, and agents that stream their own
+      // per-call usage set recordedPerCallUsage. Lifetime totals sum every
+      // scope, so writing both would bill this turn twice.
+      if (run.launch.mode !== 'scoped' && !run.recordedPerCallUsage && !['opencode', 'pi'].includes(run.launch.agentId)) {
         const rows = (run.nativeUsage || new NativeTurnUsage()).rows(run.launch.agentId, final?.usage, final?.model || run.launch.model)
         this.recordNativeUsage(run, rows, final?.id || run.printResponseId || run.runMarker || run.id)
+        // Claude Code streams a per-call row per assistant message (recordClaudePrintCallUsage
+        // sets recordedPerCallUsage), but Codex/Grok global turns still land here with only a
+        // turn aggregate. The refresh below derives the context bar from it.
       }
       const deferPiUsageRefresh = run.launch.agentId === 'pi'
       run.terminalUsageRefresh = deferPiUsageRefresh
@@ -1591,6 +1666,7 @@ export class CodingAgentRunManager {
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
+    run.recordedPerCallUsage = false
     run.runMarker = undefined
     run.memoryExportStarted = false
     run.piToolBlocks = new Map()
@@ -1919,6 +1995,7 @@ export class CodingAgentRunManager {
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
+    run.recordedPerCallUsage = false
     run.printToolBlocks = new Map()
     run.currentChildStderr = ''
     run.runMarker = undefined
@@ -2081,6 +2158,7 @@ export class CodingAgentRunManager {
     }
 
     if ((event.type === 'assistant' || event.type === 'user') && event.message) {
+      if (event.type === 'assistant') this.recordClaudePrintCallUsage(run, event)
       this.handleClaudeTopLevelMessage(run, event.message)
       return
     }
@@ -2143,6 +2221,50 @@ export class CodingAgentRunManager {
     } catch (err) {
       logger.warn({ err, runId: run.id, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to persist Claude native session id')
     }
+  }
+
+  /**
+   * Record one Claude Code assistant turn as a per-call usage row.
+   *
+   * Runs that are not proxied talk to Anthropic directly, so the CLI's own
+   * stream is the only place their token counts appear. The `result` event at
+   * the end carries the turn aggregate, which cannot be read as a context
+   * measurement — a turn with twenty tool calls sums twenty prompts. Each
+   * `assistant` message instead reports exactly one call.
+   */
+  private recordClaudePrintCallUsage(run: ManagedCodingAgentRun, event: any) {
+    // Scoped runs already get a model_call row per provider call from the
+    // proxy; recording the CLI's copy as well would double the totals.
+    if (run.launch.mode === 'scoped') return
+    // Subagent turns run in a window of their own, so their usage says nothing
+    // about how full the main thread's context is.
+    if (event.parent_tool_use_id || event.parentToolUseId) return
+    const message = event.message
+    const messageId = String(message?.id || '').trim()
+    if (!messageId || !message?.usage) return
+    // Anthropic reports input_tokens exclusive of the cached prefix, so the
+    // cache columns must stay separate rather than be subtracted out.
+    const usage = normalizeTokenUsage(message.usage)
+    if (usage.isEstimated) return
+    recordSessionUsage({
+      sessionId: run.launch.sessionId,
+      // Message ids are stable per call, so a replayed or duplicated line
+      // collapses onto the same row instead of inflating the totals.
+      runId: messageId,
+      source: 'coding_agent',
+      agent: usageCodingAgent(run.launch.agentId),
+      usageScope: 'model_call',
+      contextHistoryRevision: run.contextHistoryRevision ?? 0,
+      contextNativeSessionId: run.launch.agentNativeSessionId || '',
+      apiCalls: 1,
+      usage,
+      profile: run.launch.profile,
+      model: String(message.model || '') || run.launch.model,
+      provider: run.launch.provider,
+      isEstimated: false,
+    })
+    run.recordedPerCallUsage = true
+    this.publishModelCallContext(run, usage)
   }
 
   private handleClaudeTopLevelMessage(run: ManagedCodingAgentRun, message: any) {
@@ -2498,6 +2620,7 @@ export class CodingAgentRunManager {
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
+    run.recordedPerCallUsage = false
     run.codexToolBlocks = new Map()
     run.codexPendingUsage = undefined
     run.codexPendingError = undefined
@@ -2616,6 +2739,7 @@ export class CodingAgentRunManager {
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
+    run.recordedPerCallUsage = false
     run.codexToolBlocks = new Map()
     run.codexPendingUsage = undefined
     run.codexPendingError = undefined
@@ -2747,6 +2871,7 @@ export class CodingAgentRunManager {
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
+    run.recordedPerCallUsage = false
     run.currentChildStderr = ''
     run.runMarker = undefined
     run.memoryExportStarted = false
@@ -2858,6 +2983,8 @@ export class CodingAgentRunManager {
             source: 'coding_agent',
             agent: 'opencode',
             usageScope: 'model_call',
+            contextHistoryRevision: run.contextHistoryRevision ?? 0,
+            contextNativeSessionId: run.launch.agentNativeSessionId || '',
             apiCalls: 1,
             usage,
             profile: run.launch.profile,
@@ -2961,6 +3088,7 @@ export class CodingAgentRunManager {
     run.printCompleted = false
     run.responseStartEmitted = false
     run.terminalEventHandled = false
+    run.recordedPerCallUsage = false
     run.codexToolBlocks = new Map()
     run.codexChatText = ''
     run.codexPendingUsage = undefined
@@ -3109,13 +3237,12 @@ export class CodingAgentRunManager {
       return
     }
 
-    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(event))
-
     const method = String(event.method || '').trim()
     if (method) {
-      this.handleCodexProtocolEvent(run, method, event.params || {})
+      this.handleCodexProtocolEvent(run, method, event.params || {}, this.codexNativeSessionIdFrom(event))
       return
     }
+    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(event))
 
     const msg = event.msg || event.message
     if (msg && (typeof msg.content === 'string' || typeof msg.text === 'string')) {
@@ -3157,8 +3284,14 @@ export class CodingAgentRunManager {
     }
   }
 
-  private handleCodexProtocolEvent(run: ManagedCodingAgentRun, method: string, params: any) {
-    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(params))
+  private handleCodexProtocolEvent(
+    run: ManagedCodingAgentRun, method: string, params: any,
+    nativeSessionId = this.codexNativeSessionIdFrom(params),
+  ) {
+    // A delayed measurement cannot select a different thread; lifecycle events can.
+    if (method === 'thread/tokenUsage/updated' && nativeSessionId
+      && run.launch.agentNativeSessionId && nativeSessionId !== run.launch.agentNativeSessionId) return
+    this.recordCodexNativeSessionId(run, nativeSessionId)
     if (method === 'thread/started') {
       this.recordCodexNativeSessionId(run, String(params.thread_id || params.threadId || '').trim())
       return
@@ -3182,6 +3315,17 @@ export class CodingAgentRunManager {
     }
     if (method === 'item/completed') {
       this.handleCodexItemCompleted(run, params.item || params)
+      return
+    }
+    if (method === 'thread/tokenUsage/updated') {
+      // `last` is the most recent model call, `total` sums the thread, so only
+      // `last` measures what currently occupies the window. For a Codex run
+      // that talks to the provider directly this is the sole context source —
+      // turn/completed reports a turn aggregate, which over-reports a
+      // multi-call turn. Keep the snapshot separate from billable usage.
+      const tokenUsage = params?.tokenUsage || params?.token_usage
+      const last = tokenUsage?.last
+      this.publishContextTokens(run, compactTokenNumber(last?.totalTokens ?? last?.total_tokens))
       return
     }
     if (method === 'turn/completed') {

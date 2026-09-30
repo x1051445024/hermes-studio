@@ -37,6 +37,6 @@ export function pendingUpdateDirectories(options: {
   if (localAppData) bases.add(localAppData)
   if (appDataPath) bases.add(appDataPath)
   if (!bases.size) return []
-  return [...bases].flatMap(base => updateCacheNames(options.appName || 'Ekko Studio')
+  return [...bases].flatMap(base => updateCacheNames(options.appName || 'Hermes Studio')
     .map(name => join(base, name, 'pending')))
 }

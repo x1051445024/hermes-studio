@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NSpin, NButton, NCheckbox, NInput, NInputNumber, NModal, NSelect, NTag, useDialog, useMessage } from 'naive-ui'
+import { NSpin, NButton, NCheckbox, NInput, NInputNumber, NModal, NSelect, NSwitch, NTag, useDialog, useMessage } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import { useI18n } from 'vue-i18n'
@@ -44,6 +44,9 @@ const rateLimitDelay = ref<number | null>(null)
 const requestTimeoutSeconds = ref<number | null>(null)
 const staleTimeoutSeconds = ref<number | null>(null)
 const extraBodyText = ref('')
+const extraHeadersText = ref('')
+const preserveClientIdentity = ref(false)
+const proxyUrlText = ref('')
 
 const providerLabelInputProps = {
   name: 'provider-display-name',
@@ -53,6 +56,12 @@ const providerLabelInputProps = {
 }
 const providerBaseUrlInputProps = {
   name: 'provider-base-url',
+  autocomplete: 'off',
+  spellcheck: false,
+  'data-form-type': 'other',
+}
+const providerProxyUrlInputProps = {
+  name: 'provider-proxy-url',
   autocomplete: 'off',
   spellcheck: false,
   'data-form-type': 'other',
@@ -108,6 +117,9 @@ function resetDraft(next: ProviderEditorDetail) {
   requestTimeoutSeconds.value = next.request_timeout_seconds ?? null
   staleTimeoutSeconds.value = next.stale_timeout_seconds ?? null
   extraBodyText.value = next.extra_body ? JSON.stringify(next.extra_body, null, 2) : ''
+  extraHeadersText.value = next.extra_headers ? JSON.stringify(next.extra_headers, null, 2) : ''
+  preserveClientIdentity.value = next.preserve_client_identity === true
+  proxyUrlText.value = next.proxy_url || ''
   const contexts: Record<string, number | null> = {}
   for (const model of new Set([...modelIds.value, ...Object.keys(next.context_lengths)])) {
     contexts[model] = next.context_lengths[model] ?? null
@@ -144,6 +156,18 @@ function parseExtraBody(): Record<string, unknown> | null {
   return value as Record<string, unknown>
 }
 
+function parseExtraHeaders(): Record<string, unknown> | null {
+  const raw = extraHeadersText.value.trim()
+  if (!raw) return null
+  let value: unknown
+  try { value = JSON.parse(raw) } catch { throw new Error(t('models.extraHeadersInvalid')) }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('models.extraHeadersInvalid'))
+  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
+    if (!String(name || '').trim() || typeof headerValue !== 'string') throw new Error(t('models.extraHeadersInvalid'))
+  }
+  return value as Record<string, unknown>
+}
+
 function buildPatch(): ProviderEditorPatch {
   const patch: ProviderEditorPatch = {}
   if (can('label')) patch.label = label.value.trim()
@@ -170,6 +194,16 @@ function buildPatch(): ProviderEditorPatch {
     if (can('extra_body')) {
       const nextExtraBody = parseExtraBody()
       if (JSON.stringify(nextExtraBody) !== JSON.stringify(detail.value.extra_body ?? null)) patch.extra_body = nextExtraBody
+    }
+    if (can('extra_headers')) {
+      const nextExtraHeaders = parseExtraHeaders()
+      if (JSON.stringify(nextExtraHeaders) !== JSON.stringify(detail.value.extra_headers ?? null)) patch.extra_headers = nextExtraHeaders
+    }
+    if (can('preserve_client_identity') && preserveClientIdentity.value !== (detail.value.preserve_client_identity ?? false)) {
+      patch.preserve_client_identity = preserveClientIdentity.value
+    }
+    if (can('proxy_url') && (proxyUrlText.value.trim() || null) !== (detail.value.proxy_url ?? null)) {
+      patch.proxy_url = proxyUrlText.value.trim() || null
     }
   }
   return patch
@@ -339,6 +373,24 @@ async function clearCredentialNow() {
           <NSelect v-model:value="apiMode" :options="API_MODE_OPTIONS" />
         </label>
 
+        <div v-if="can('preserve_client_identity')" class="identity-toggle">
+          <div class="identity-toggle-text">
+            <span>{{ t('models.preserveClientIdentity') }}</span>
+            <small>{{ t('models.preserveClientIdentityHint') }}</small>
+          </div>
+          <NSwitch v-model:value="preserveClientIdentity" />
+        </div>
+
+        <label v-if="can('proxy_url')" class="field">
+          <span>{{ t('models.providerProxyUrl') }}</span>
+          <NInput
+            v-model:value="proxyUrlText"
+            :input-props="providerProxyUrlInputProps"
+            :placeholder="t('models.providerProxyUrlPlaceholder')"
+          />
+          <small>{{ t('models.providerProxyUrlHint') }}</small>
+        </label>
+
         <label v-if="can('preferred_model')" class="field">
           <span>{{ t('models.providerPreferredModel') }}</span>
           <NSelect
@@ -383,7 +435,7 @@ async function clearCredentialNow() {
         </section>
 
         <details
-          v-if="can('discover_models') || can('rate_limit_delay') || can('request_timeout_seconds') || can('stale_timeout_seconds') || can('extra_body')"
+          v-if="can('discover_models') || can('rate_limit_delay') || can('request_timeout_seconds') || can('stale_timeout_seconds') || can('extra_body') || can('extra_headers')"
           class="context-section"
         >
           <summary>{{ t('models.providerAdvancedSettings') }}</summary>
@@ -412,6 +464,16 @@ async function clearCredentialNow() {
                 placeholder="{}"
               />
               <small>{{ t('models.extraBodyHint') }}</small>
+            </label>
+            <label v-if="can('extra_headers')" class="field">
+              <span>extra_headers (JSON)</span>
+              <NInput
+                v-model:value="extraHeadersText"
+                type="textarea"
+                :autosize="{ minRows: 3, maxRows: 10 }"
+                placeholder="{}"
+              />
+              <small>{{ t('models.extraHeadersHint') }}</small>
             </label>
           </div>
         </details>
@@ -573,6 +635,27 @@ async function clearCredentialNow() {
 
 .modal-actions {
   justify-content: flex-end;
+}
+
+.identity-toggle {
+  align-items: center;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.identity-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  small {
+    color: $text-muted;
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 560px) {

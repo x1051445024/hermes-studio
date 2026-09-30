@@ -105,8 +105,8 @@ describe('Ekko built-in skills', () => {
     for (const name of names) {
       const content = await readFile(join(bundledDirectory, name, 'SKILL.md'), 'utf8')
       expect(content.toLowerCase()).not.toContain('openclaw')
-      expect(content).toMatch(/^---[\s\S]*?^metadata:\s*\n\s+keywords:\s*\n(?:\s+-\s+.+\n)+---/m)
-      const keywordBlock = content.match(/^\s+keywords:\s*\n((?:\s+-\s+.+\n)+)/m)?.[1] || ''
+      expect(content).toMatch(/^---[\s\S]*?^metadata:\s*\r?\n\s+keywords:\s*\r?\n(?:\s+-\s+.+\r?\n)+---/m)
+      const keywordBlock = content.match(/^\s+keywords:\s*\r?\n((?:\s+-\s+.+\r?\n)+)/m)?.[1] || ''
       const keywords = keywordBlock.match(/^\s+-\s+(.+)$/gm)?.map(line => line.replace(/^\s+-\s+/, '')) || []
       expect(keywords.length).toBeGreaterThanOrEqual(1)
       expect(keywords.length).toBeLessThanOrEqual(8)

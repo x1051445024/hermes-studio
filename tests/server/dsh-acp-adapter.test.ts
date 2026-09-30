@@ -16,7 +16,9 @@ async function fixture(version: string, transform = (source: string) => source, 
   const pkg = join(dependencyRoot, 'node_modules/@deepseek-ai/dsh-acp')
   await mkdir(join(pkg, 'lib'), { recursive: true })
   await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-acp', version }))
-  const source = transform(await readFile(new URL('../fixtures/dsh-acp-compatible.mjs', import.meta.url), 'utf8'))
+  // The adapter's integration-point patterns are LF-joined; normalize the
+  // fixture so a CRLF checkout (core.autocrlf=true on Windows) still matches.
+  const source = transform((await readFile(new URL('../fixtures/dsh-acp-compatible.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n'))
   await writeFile(join(pkg, 'lib/index.js'), source)
   await writeFile(join(pkg, 'LICENSE'), 'Fixture license')
   for (const [name, method, property] of [

@@ -21,8 +21,8 @@ import {
 } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 import { applyResponseStreamEvent } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
 import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
-import { addMessage, createSession, getSession, getSessionDetail, listSessions } from '../../packages/server/src/modules/studio/repositories/session-store'
-import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/modules/studio/repositories/usage-store'
+import { addMessage, clearSessionMessages, createSession, getSession, getSessionDetail, listSessions, updateSession } from '../../packages/server/src/modules/studio/repositories/session-store'
+import { getContextUsage, getLatestModelCallUsage, getRecordedUsageTotals, getUsage } from '../../packages/server/src/modules/studio/repositories/usage-store'
 import { getChatRunServer, setChatRunServer } from '../../packages/server/src/modules/studio/services/chat-run/server-registry'
 
 describe('agent runner endpoint resolver', () => {
@@ -57,6 +57,105 @@ describe('agent runner endpoint resolver', () => {
 })
 
 describe('coding agent completion errors', () => {
+  it.each(['history', 'native'])('does not publish delayed context after the %s boundary changes', boundary => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const sid = `context-boundary-${Date.now()}-${Math.random()}`
+    const agentSessionId = `agent-${sid}`
+    const emit = vi.fn()
+    ;(manager as any).emitToChat = emit
+    try {
+      manager.start({
+        agentSessionId, agentId: 'codex', mode: 'scoped',
+        agentNativeSessionId: 'native-before',
+        profile: 'default', provider: 'test-provider', model: 'test-model',
+        sessionId: sid, command: 'codex', args: [], shellCommand: 'codex',
+        workspaceDir: process.cwd(),
+      })
+      const run = (manager as any).runs.get(agentSessionId)
+      emit.mockClear()
+      if (boundary === 'history') clearSessionMessages(sid)
+      else updateSession(sid, { agent_native_session_id: 'native-after' })
+
+      ;(manager as any).publishContextTokens(run, 66_624)
+      manager.handleProxyUsageEvent(agentSessionId, {
+        type: 'response.completed',
+        data: { response: { id: `response-${sid}`, usage: { input_tokens: 100, output_tokens: 20 } } },
+      } as any)
+
+      expect(getContextUsage(sid)).toBeUndefined()
+      expect(getLatestModelCallUsage(sid)).toBeUndefined()
+      expect(emit).not.toHaveBeenCalledWith(sid, 'usage.updated', expect.anything())
+      expect(getRecordedUsageTotals(sid, 'coding_agent')).toEqual(expect.objectContaining({
+        inputTokens: 100, outputTokens: 20,
+      }))
+    } finally {
+      manager.shutdown()
+    }
+  })
+
+  it.each(['history-reuse', 'native-switch', 'cleanup'])(
+    'retains request-owned billing without reviving context after %s',
+    boundary => {
+      initAllHermesTables()
+      const manager = new CodingAgentRunManager()
+      const sid = `request-owned-usage-${Date.now()}-${Math.random()}`
+      const agentSessionId = `agent-${sid}`
+      try {
+        manager.start({
+          agentSessionId, agentId: 'codex', mode: 'scoped', agentNativeSessionId: 'native-A',
+          profile: 'default', provider: 'test-provider', model: 'test-model', sessionId: sid,
+          command: 'codex', args: [], shellCommand: 'codex', workspaceDir: process.cwd(),
+        })
+        const run = (manager as any).runs.get(agentSessionId)
+        const observer = manager.createProxyUsageObserver(agentSessionId)
+        if (boundary === 'history-reuse') {
+          clearSessionMessages(sid)
+          vi.spyOn(manager as any, 'startCodexExecTurn').mockImplementation(() => {})
+          vi.spyOn(manager as any, 'startWorkspaceRunDiff').mockImplementation(() => {})
+          manager.send(sid, 'fresh request')
+        } else if (boundary === 'native-switch') {
+          ;(manager as any).recordCodexNativeSessionId(run, 'native-B')
+        } else {
+          manager.stop(sid, { reportClosed: false })
+          clearSessionMessages(sid)
+        }
+        const completed: any = {
+          type: 'response.completed',
+          data: { response: { id: `old-request-${sid}`, usage: { input_tokens: 100, output_tokens: 20 } } },
+        }
+        observer(completed)
+        observer(completed)
+        expect(getRecordedUsageTotals(sid, 'coding_agent')).toEqual(expect.objectContaining({
+          inputTokens: 100, outputTokens: 20, apiCalls: 1,
+        }))
+        expect(getContextUsage(sid)).toBeUndefined()
+        expect(getLatestModelCallUsage(sid)).toBeUndefined()
+      } finally {
+        manager.shutdown()
+      }
+    },
+  )
+
+  it.each([{ exited: true }, { stoppedByUser: true }])('ignores late context events from a retired run %j', flags => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const sid = `late-context-${Date.now()}-${Math.random()}`
+    const emit = vi.fn()
+    ;(manager as any).emitToChat = emit
+    try {
+      ;(manager as any).publishContextTokens({
+        ...flags,
+        launch: { sessionId: sid },
+        state: { messages: [], events: [], queue: [], isWorking: false },
+      }, 66_624)
+      expect(getContextUsage(sid)).toBeUndefined()
+      expect(emit).not.toHaveBeenCalled()
+    } finally {
+      manager.shutdown()
+    }
+  })
+
   it('publishes realtime and terminal events after the run manager directory move', () => {
     const previous = getChatRunServer()
     const emitExternalEvent = vi.fn()
@@ -1216,6 +1315,42 @@ describe('coding agent run state', () => {
     manager.shutdown()
   })
 
+  it('ignores stale Codex thread usage without rebinding the active native session', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const sid = `codex-stale-thread-${Date.now()}-${Math.random()}`
+    const agentSessionId = `agent-${sid}`
+    try {
+      manager.start({
+        agentSessionId, agentId: 'codex', mode: 'global', agentNativeSessionId: 'native-B',
+        profile: 'default', provider: 'test-provider', model: 'test-model', sessionId: sid,
+        command: 'codex', args: [], shellCommand: 'codex', workspaceDir: process.cwd(),
+      })
+      const run = (manager as any).runs.get(agentSessionId)
+      const notify = (threadId: string, totalTokens: number) => {
+        ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+          method: 'thread/tokenUsage/updated',
+          params: { threadId, tokenUsage: { last: { totalTokens } } },
+        }))
+      }
+      notify('native-A', 66_624)
+      expect(run.launch.agentNativeSessionId).toBe('native-B')
+      expect(getSession(sid)?.agent_native_session_id).toBe('native-B')
+      expect(getContextUsage(sid)).toBeUndefined()
+
+      notify('native-B', 20_000)
+      expect(getContextUsage(sid)?.contextTokens).toBe(20_000)
+      ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+        method: 'thread/started', params: { threadId: 'native-C' },
+      }))
+      notify('native-C', 30_000)
+      expect(getSession(sid)?.agent_native_session_id).toBe('native-C')
+      expect(getContextUsage(sid)?.contextTokens).toBe(30_000)
+    } finally {
+      manager.shutdown()
+    }
+  })
+
   it('maps Codex exec JSONL assistant deltas into chat messages', async () => {
     initAllHermesTables()
     const manager = new CodingAgentRunManager()
@@ -1259,6 +1394,14 @@ describe('coding agent run state', () => {
       method: 'item/agentMessage/delta',
       params: { delta: 'I am GPT-5-Codex' },
     }))
+    // `last` is the prompt of the most recent model call — the only reading
+    // that describes the window. turn.completed below carries the turn
+    // aggregate instead, which sums every call and cannot stand in for it.
+    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+      method: 'thread/tokenUsage/updated',
+      params: { tokenUsage: { last: { totalTokens: 66_624 }, total: { totalTokens: 131_072 } } },
+    }))
+    expect(getContextUsage(chatSessionId)?.contextTokens).toBe(66_624)
     ;(manager as any).handleCodexExecLine(run, JSON.stringify({
       type: 'turn.completed',
       usage: { input_tokens: 12, output_tokens: 7, total_tokens: 19 },
@@ -1282,6 +1425,9 @@ describe('coding agent run state', () => {
     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
     const eventNames = emitted.map(event => event.event)
     expect(eventNames.lastIndexOf('usage.updated')).toBeLessThan(eventNames.indexOf('run.completed'))
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+    const reloaded = await loadSessionStateFromDb(chatSessionId, new Map())
+    expect(reloaded.contextTokens).toBe(66_624)
     manager.shutdown()
   })
 
@@ -2425,6 +2571,34 @@ describe('response stream tool detail events', () => {
 })
 
 describe('OpenCode JSON stream mapping', () => {
+  it('keeps late global step accounting outside the cleared history boundary', () => {
+    initAllHermesTables()
+    const manager = new CodingAgentRunManager()
+    const sid = `opencode-context-boundary-${Date.now()}-${Math.random()}`
+    const agentSessionId = `agent-${sid}`
+    try {
+      manager.start({
+        agentSessionId, agentId: 'opencode', mode: 'global', agentNativeSessionId: 'native-before',
+        profile: 'default', provider: 'test-provider', model: 'test-model', sessionId: sid,
+        command: 'opencode', args: [], shellCommand: 'opencode', workspaceDir: process.cwd(),
+      })
+      const run = (manager as any).runs.get(agentSessionId)
+      clearSessionMessages(sid)
+      ;(manager as any).handleOpenCodeLine(run, JSON.stringify({
+        type: 'step_finish',
+        sessionID: 'native-before',
+        part: { type: 'step-finish', id: `step-${sid}`, tokens: { input: 60_000, output: 120 } },
+      }))
+      expect(getRecordedUsageTotals(sid, 'coding_agent')).toEqual(expect.objectContaining({
+        inputTokens: 60_000, outputTokens: 120,
+      }))
+      expect(getLatestModelCallUsage(sid)).toBeUndefined()
+      expect(getContextUsage(sid)).toBeUndefined()
+    } finally {
+      manager.shutdown()
+    }
+  })
+
   it('ignores scoped proxy lifecycle events and accepts native stdout once', () => {
     const manager = new CodingAgentRunManager()
     const emitted: Array<{ event: string; payload: any }> = []

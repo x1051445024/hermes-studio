@@ -10,7 +10,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
   logger: { warn: vi.fn() },
 }))
 
-import { normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/modules/studio/services/usage/usage-recorder'
+import { contextTokensFromModelCall, normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/modules/studio/services/usage/usage-recorder'
 
 describe('usage recorder', () => {
   beforeEach(() => {
@@ -137,5 +137,40 @@ describe('usage recorder', () => {
       agent: 'cursor',
     }))
     expect(updateUsageMock.mock.calls[0][1].agent).not.toBe('claude_code')
+  })
+
+  it('counts the cached prompt prefix as occupied context', () => {
+    // normalizeTokenUsage keeps the cached prefix in its own columns so cost
+    // accounting can price it separately; the window still holds all of it.
+    const usage = normalizeTokenUsage({
+      input_tokens: 2,
+      output_tokens: 844,
+      cache_read_input_tokens: 65_732,
+      cache_creation_input_tokens: 890,
+    })
+
+    expect(contextTokensFromModelCall(usage)).toEqual({
+      inputTokens: 66_624,
+      outputTokens: 844,
+    })
+  })
+
+  it('ignores reasoning tokens, which providers already count inside output', () => {
+    expect(contextTokensFromModelCall({
+      inputTokens: 100,
+      outputTokens: 40,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 25,
+    } as any)).toEqual({ inputTokens: 100, outputTokens: 40 })
+  })
+
+  it('treats missing or negative provider counters as zero', () => {
+    expect(contextTokensFromModelCall({
+      inputTokens: undefined,
+      outputTokens: null,
+      cacheReadTokens: -5,
+      cacheWriteTokens: '2048',
+    })).toEqual({ inputTokens: 2_048, outputTokens: 0 })
   })
 })

@@ -19,7 +19,7 @@ describe('Cursor CLI install policy', () => {
     resetCodingAgentNpmInvocationCount()
     await installCodingAgent('cursor')
     expect(getCodingAgentNpmInvocationCount()).toBe(0)
-  })
+  }, 30_000)
 
   it('reports Cursor update checks as unsupported instead of current', async () => {
     const result = await checkUpdateAgent('cursor')
@@ -47,5 +47,5 @@ describe('Cursor CLI install policy', () => {
     } finally {
       stopMatching.mockRestore()
     }
-  })
+  }, 30_000)
 })

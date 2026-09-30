@@ -34,7 +34,7 @@ const contentMode = computed<ChatContentMode>(() => {
   if (route.name === 'hermes.models') return 'models'
   return 'chat'
 })
-const productTitle = 'Ekko Studio'
+const productTitle = 'Hermes Studio'
 const initializing = ref(true)
 const routeLoading = ref(false)
 let routeLoadSequence = 0

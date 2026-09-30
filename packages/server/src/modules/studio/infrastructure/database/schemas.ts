@@ -31,10 +31,22 @@ export const USAGE_SCHEMA: Record<string, string> = {
   cost_source: "TEXT NOT NULL DEFAULT 'unknown'",
   cost_pricing: 'TEXT',
   created_at: 'INTEGER NOT NULL DEFAULT 0',
+  context_history_revision: 'INTEGER NOT NULL DEFAULT 0',
+  context_native_session_id: "TEXT NOT NULL DEFAULT ''",
 }
 
 export const USAGE_RUN_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_usage_run
   ON ${USAGE_TABLE}(session_id, run_id, source) WHERE run_id <> ''`
+
+// Measurements are not billable usage and must never enter ledger aggregates.
+export const CONTEXT_USAGE_TABLE = 'session_context_usage'
+export const CONTEXT_USAGE_SCHEMA: Record<string, string> = {
+  session_id: 'TEXT PRIMARY KEY',
+  context_tokens: 'INTEGER NOT NULL',
+  updated_at: 'INTEGER NOT NULL',
+  context_history_revision: 'INTEGER NOT NULL DEFAULT 0',
+  context_native_session_id: "TEXT NOT NULL DEFAULT ''",
+}
 
 export const USAGE_PRICING_TABLE = 'usage_pricing'
 export const USAGE_PRICING_SCHEMA = {
@@ -816,6 +828,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
   guestAgentApproval: "TEXT NOT NULL DEFAULT 'owner'",
   maxGuestAgentsPerMember: 'INTEGER NOT NULL DEFAULT 1',
   allowRemoteWorkspaceAccess: 'INTEGER NOT NULL DEFAULT 0',
+  fullLocalAccess: 'INTEGER NOT NULL DEFAULT 0',
   agentHandoffEnabled: 'INTEGER NOT NULL DEFAULT 1',
   agentHandoffMaxDepth: 'INTEGER',
   agentHandoffUnlimited: 'INTEGER NOT NULL DEFAULT 0',
@@ -1620,6 +1633,7 @@ export function initAllHermesTables(): void {
     syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
     syncTable(USAGE_PRICING_TABLE, USAGE_PRICING_SCHEMA, { primaryKey: 'profile' })
     db.exec(USAGE_RUN_INDEX)
+    syncTable(CONTEXT_USAGE_TABLE, CONTEXT_USAGE_SCHEMA, { primaryKey: 'session_id' })
 
     // Session store
     syncTable(SESSION_CATEGORIES_TABLE, SESSION_CATEGORIES_SCHEMA, {

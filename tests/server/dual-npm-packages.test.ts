@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildSync } from 'esbuild'
 import { packNpmReleases } from '../../scripts/pack-npm-releases.mjs'
@@ -31,7 +31,10 @@ describe('dual npm release artifacts', () => {
     for (const artifact of packed) {
       const unpacked = join(root, artifact.name)
       mkdirSync(unpacked)
-      execFileSync('tar', ['-xzf', join(output, artifact.filename), '-C', unpacked])
+      // Extraction runs with cwd = unpacked and a relative archive path: GNU
+      // tar parses absolute 'C:\...' paths as host:path and bsdtar (System32)
+      // rejects --force-local, while both accept cwd + relative (POSIX tar too).
+      execFileSync('tar', ['-xzf', relative(unpacked, join(output, artifact.filename))], { cwd: unpacked })
       const packageDir = join(unpacked, 'package')
       const pkg = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'))
       expect(pkg.name).toBe(artifact.name)

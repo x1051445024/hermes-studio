@@ -56,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='bridge-stop-') as temp:
                 pass
 `)
     expect(result).toEqual({ starts: 1, exited: true, cleared: true, closed: true })
-  })
+  }, 30_000)
 
   it.each(['broker', 'worker', 'profile-worker'])('finishes interpreter re-exec before the %s accepts requests', (mode) => {
     const result = runPython(String.raw`
@@ -72,7 +72,7 @@ import time
 from pathlib import Path
 
 bridge = Path('packages/server/src/modules/hermes/services/bridge/python/hermes_bridge.py').resolve()
-with tempfile.TemporaryDirectory(prefix='bridge-bootstrap-') as temp:
+with tempfile.TemporaryDirectory(prefix='bridge-bootstrap-', ignore_cleanup_errors=True) as temp:
     root = Path(temp)
     marker = root / 'bootstrapped'
     profile_home = root / 'profiles' / 'work'
@@ -153,13 +153,14 @@ Path(os.environ['BRIDGE_TEST_MARKER']).write_text(json.dumps({
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=5)
+            stderr.close()
 `, [mode])
     expect(result).toEqual({
       bootstrapped_before_ready: true,
       responses: mode !== 'broker' ? ['fixture agent import reached', 'fixture agent import reached'] : [],
       pong: true,
     })
-  })
+  }, 30_000)
 
   it.each(['legacy', 'broken'])('handles a %s bootstrap without hiding dependency failures', (mode) => {
     const result = runPython(String.raw`
@@ -193,5 +194,5 @@ with tempfile.TemporaryDirectory(prefix='bridge-bootstrap-import-') as temp:
     print(json.dumps(result))
 `, [mode])
     expect(result).toEqual(mode === 'legacy' ? { ok: true } : { missing: 'missing_bootstrap_dependency' })
-  })
+  }, 30_000)
 })

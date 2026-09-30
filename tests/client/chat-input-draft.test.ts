@@ -317,7 +317,7 @@ describe('ChatInput draft persistence', () => {
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).style.height).not.toBe('180px')
   })
 
-  it('shows only cumulative native usage including caches while retaining Hermes and Ekko context', async () => {
+  it('shows real context measurements for coding agents and keeps Hermes and Ekko context fallback', async () => {
     const wrapper = mountForSession('session-codex', {
       source: 'coding_agent',
       agent: 'codex',
@@ -330,20 +330,24 @@ describe('ChatInput draft persistence', () => {
     })
     await nextTick()
 
-    expect(wrapper.get('.context-info').text()).toBe('chat.sessionUsage 5.1k')
-    expect(wrapper.find('.context-limit-editable').exists()).toBe(false)
-    expect(wrapper.find('.context-bar').exists()).toBe(false)
+    // Local patch (context usage): a measured context wins over cumulative
+    // billing totals, which would read 5.1k here.
+    expect(wrapper.get('.context-info').text()).toMatch(/2\.0k\s+\//)
+    expect(wrapper.get('.context-info').text()).not.toContain('chat.sessionUsage')
+    expect(wrapper.get('.context-limit-editable').text()).toBe('256.0k')
+    expect(wrapper.find('.context-bar').exists()).toBe(true)
 
     const chatStore = useChatStore()
     Object.assign(chatStore.activeSession!, { agent: 'cursor', codingAgentId: 'cursor' })
     await nextTick()
-    expect(wrapper.get('.context-info').text()).toBe('chat.sessionUsage 5.1k')
+    expect(wrapper.get('.context-info').text()).toMatch(/2\.0k\s+\//)
     Object.assign(chatStore.activeSession!, { inputTokens: 24_003, outputTokens: 474, cacheReadTokens: 20_736, cacheWriteTokens: 0, contextTokens: 0 })
     await nextTick()
-    expect(wrapper.get('.context-info').text()).toBe('chat.sessionUsage 45.2k')
+    // An explicit zero is a real measurement, not "unknown".
+    expect(wrapper.get('.context-info').text()).toMatch(/0\s+\//)
     Object.assign(chatStore.activeSession!, { contextTokens: 24_477 })
     await nextTick()
-    expect(wrapper.get('.context-info').text()).toBe('chat.sessionUsage 45.2k')
+    expect(wrapper.get('.context-info').text()).toMatch(/24\.5k\s+\//)
     Object.assign(chatStore.activeSession!, { inputTokens: 1200, outputTokens: 800, contextTokens: 2000 })
     Object.assign(chatStore.activeSession!, { agent: 'ekko-agent', codingAgentId: 'ekko-agent' })
     await flushPromises()
@@ -361,20 +365,62 @@ describe('ChatInput draft persistence', () => {
     expect(wrapper.find('.context-bar').exists()).toBe(true)
   })
 
-  it.each(['cursor', 'codex', 'claude-code', 'pi', 'grok', 'opencode', 'dsh'])('shows only this session cumulative usage for %s', async agent => {
+  it.each(['cursor', 'codex', 'claude-code', 'pi', 'grok', 'opencode', 'dsh'])('shows the measured context, never cumulative billing, for %s', async agent => {
     const wrapper = mountForSession('session-usage', {
       source: 'coding_agent', agent, codingAgentId: agent as any,
       inputTokens: 1_800_000_000, outputTokens: 1_200_000, cacheReadTokens: 56_000_000,
       cacheWriteTokens: 0, contextTokens: 50_000,
     })
     await nextTick()
-    expect(wrapper.get('.context-info').text()).toBe('chat.sessionUsage 1857.2M')
-    expect(wrapper.find('.context-limit-editable').exists()).toBe(false)
-    expect(wrapper.find('.context-bar').exists()).toBe(false)
+    expect(wrapper.get('.context-info').text()).toMatch(/50\.0k\s+\//)
+    expect(wrapper.get('.context-info').text()).not.toContain('chat.sessionUsage')
     expect(wrapper.get('.context-usage-row').text()).not.toContain('chat.contextUsed')
+    expect(wrapper.find('.context-bar').exists()).toBe(true)
     useChatStore().activeSession!.contextTokens = 0
     await nextTick()
-    expect(wrapper.get('.context-info').text()).toBe('chat.sessionUsage 1857.2M')
+    expect(wrapper.get('.context-info').text()).toMatch(/0\s+\//)
+  })
+
+  it('does not derive coding-agent context usage from accumulated billing totals', async () => {
+    const wrapper = mountForSession('session-codex-unknown', {
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+      inputTokens: 1200,
+      outputTokens: 800,
+    })
+    await nextTick()
+
+    expect(wrapper.get('.context-info').text()).toContain('chat.contextUnknown')
+    expect(wrapper.get('.context-info').text()).not.toContain('2.0k')
+    expect(wrapper.find('.context-bar').exists()).toBe(false)
+  })
+
+  it('treats zero coding-agent context usage as a known value', async () => {
+    const wrapper = mountForSession('session-codex-empty-context', {
+      source: 'coding_agent',
+      agent: 'codex',
+      codingAgentId: 'codex',
+      inputTokens: 1200,
+      outputTokens: 800,
+      contextTokens: 0,
+    })
+    await nextTick()
+
+    expect(wrapper.get('.context-info').text()).toMatch(/0\s+\//)
+    expect(wrapper.find('.context-bar').exists()).toBe(true)
+  })
+
+  it('keeps the accumulated-token fallback for regular Hermes sessions', async () => {
+    const wrapper = mountForSession('session-hermes-fallback', {
+      source: 'cli',
+      inputTokens: 1200,
+      outputTokens: 800,
+    })
+    await nextTick()
+
+    expect(wrapper.get('.context-info').text()).toContain('2.0k')
+    expect(wrapper.find('.context-bar').exists()).toBe(true)
   })
 
   it('shows reasoning effort selector for coding-agent sessions', async () => {

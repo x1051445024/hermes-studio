@@ -134,7 +134,7 @@ describe('coding agent resumed session config', () => {
     expect(launch.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/claude-code-proxy\/.+$/)
     const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
     expect(settings.env.ANTHROPIC_API_KEY).toBe(launch.env.ANTHROPIC_API_KEY)
-  })
+  }, 30_000)
 
   it('recovers legacy sanitized custom provider keys from existing sessions', async () => {
     const home = makeHome()

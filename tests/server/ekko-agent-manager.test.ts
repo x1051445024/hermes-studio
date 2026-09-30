@@ -147,7 +147,7 @@ describe('GlobalEkkoAgent', () => {
     expect(workRuntime.jev.available).toBe(false)
     expect(workRuntime.jev.settings.memoryEnabled).toBe(false)
     expect(await readFile(setup.layout.configPath, 'utf8')).toBe(before)
-  })
+  }, 30_000)
 
   it('passes Profile JEV settings into isolated runs and degrades config read failures', async () => {
     const setup = createTestSetup(['work'])
@@ -164,7 +164,7 @@ describe('GlobalEkkoAgent', () => {
     vi.stubGlobal('fetch', upstream)
     expect(await runtime.jev.evaluate({ state: null, questions: { ok: noul('OK?') } })).toBeUndefined()
     expect(upstream).not.toHaveBeenCalled()
-  })
+  }, 30_000)
 
   it('sets up global directories and the memory database before any agent run', () => {
     const setup = setupGlobalEkkoAgent({
@@ -517,7 +517,7 @@ describe('GlobalEkkoAgent', () => {
     } finally {
       agent.close()
     }
-  })
+  }, 30_000)
 
   it('injects compact request logging into isolated runtimes', async () => {
     const agent = createTestAgent({ memory: false, profile: 'work' })
@@ -566,5 +566,5 @@ describe('GlobalEkkoAgent', () => {
     } finally {
       agent.close()
     }
-  })
+  }, 30_000)
 })

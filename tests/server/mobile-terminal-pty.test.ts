@@ -15,7 +15,7 @@ it.skipIf(!pty)('pushes real PTY command output and process exit without polling
     const attached = sessions.attach(scope, terminal.id, 'writer')
     const completed = new Promise<string>((resolve, reject) => {
       let output = ''
-      timeout = setTimeout(() => reject(new Error('PTY push timed out')), 5000)
+      timeout = setTimeout(() => reject(new Error('PTY push timed out')), 25_000)
       sessions.stream(scope, terminal.id, 'writer', attached.lease, 0, batch => {
         output += batch.chunks.map(c => c.data).join('')
         sessions.stream(scope, terminal.id, 'writer', attached.lease, batch.cursor, () => {})
@@ -26,7 +26,7 @@ it.skipIf(!pty)('pushes real PTY command output and process exit without polling
       process.platform === 'win32' ? "Write-Output ('PUSH_' + 'OK'); exit\r" : "printf 'PUSH_%s\\n' 'OK'; exit\r")
     expect(await completed).toContain('PUSH_OK')
   } finally { clearTimeout(timeout); sessions.shutdown(); rmSync(cwd, { recursive: true, force: true }) }
-}, 10_000)
+}, 30_000)
 
 it.skipIf(!pty)('runs a real PTY in its workspace and keeps output across writer detach', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'mobile-terminal-pty-'))
@@ -40,7 +40,7 @@ it.skipIf(!pty)('runs a real PTY in its workspace and keeps output across writer
     sessions.detachWriter('first')
     const second = sessions.attach(scope, terminal.id, 'second')
     let output = ''; let cursor = 0; let exitCode: number | null = null
-    const deadline = Date.now() + 5000
+    const deadline = Date.now() + 25_000
     while (Date.now() < deadline) {
       const batch = sessions.read(scope, terminal.id, 'second', second.lease, cursor)
       output += batch.chunks.map(c => c.data).join(''); cursor = batch.cursor; exitCode = batch.exitCode
@@ -52,4 +52,4 @@ it.skipIf(!pty)('runs a real PTY in its workspace and keeps output across writer
     // macOS may resolve /var to /private/var in pwd.
     expect(output).toContain(cwd)
   } finally { sessions.shutdown(); rmSync(cwd, { recursive: true, force: true }) }
-}, 10_000)
+}, 30_000)

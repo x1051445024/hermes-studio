@@ -23,7 +23,7 @@ const KNOWN_KEYS = new Set([
   'models',
   'context_length', 'rate_limit_delay',
   'request_timeout_seconds', 'stale_timeout_seconds',
-  'discover_models', 'extra_body',
+  'discover_models', 'extra_body', 'extra_headers', 'preserve_client_identity', 'proxy_url',
 ])
 
 const CAMEL_ALIASES: Record<string, string> = {
@@ -53,6 +53,9 @@ export interface NormalizedCustomProvider {
   rate_limit_delay?: number
   discover_models?: boolean
   extra_body?: Record<string, any>
+  extra_headers?: Record<string, string>
+  preserve_client_identity?: boolean
+  proxy_url?: string
 }
 
 function looksLikeUrl(value: string): boolean {
@@ -176,6 +179,28 @@ export function normalizeCustomProviderEntry(
   }
   if (e.extra_body && typeof e.extra_body === 'object' && !Array.isArray(e.extra_body)) {
     normalized.extra_body = { ...e.extra_body }
+  }
+  // preserve_client_identity: opt-in switch that forwards the spawned CLI's own
+  // identity headers upstream (official Codex / Claude Code client metadata).
+  if (typeof e.preserve_client_identity === 'boolean') {
+    normalized.preserve_client_identity = e.preserve_client_identity
+  }
+
+  // proxy_url: per-provider egress proxy for coding-agent upstream requests.
+  if (typeof e.proxy_url === 'string') {
+    const proxyUrl = e.proxy_url.trim()
+    if (proxyUrl) normalized.proxy_url = proxyUrl
+  }
+
+  // extra_headers: request headers appended to coding-agent upstream requests.
+  // Only string values are forwarded; anything else is dropped at read time.
+  if (e.extra_headers && typeof e.extra_headers === 'object' && !Array.isArray(e.extra_headers)) {
+    const headers: Record<string, string> = {}
+    for (const [headerName, headerValue] of Object.entries(e.extra_headers)) {
+      const name = String(headerName || '').trim()
+      if (name && typeof headerValue === 'string') headers[name] = headerValue
+    }
+    if (Object.keys(headers).length > 0) normalized.extra_headers = headers
   }
 
   // Surface unknown keys in the logs — same intent as Agent's warning, kept

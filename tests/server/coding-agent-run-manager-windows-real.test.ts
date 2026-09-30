@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -79,7 +80,23 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
   process.stdout.write(JSON.stringify({ type: 'agent_settled' }) + '\n')
 })
 `, 'utf8')
-    await writeFile(commandPath, `@echo off\r\nnode "%~dp0pi-rpc-fixture.cjs" %*\r\n`, 'utf8')
+    // The fixture .cmd invokes node through its absolute path: child cmd.exe
+    // shells spawned by the test runner do not inherit the nodejs directory
+    // on PATH on this host (the runner itself is launched via an absolute path).
+    // cmd.exe cannot execute a quoted command path containing spaces, and the
+    // spawn wrapper does not keep quotes; use the space-free 8.3 form instead.
+    // Resolve the space-free 8.3 form through a real cmd invocation: the .cmd
+    // fixture's own body cannot quote an executable path containing spaces.
+    const shortPathScript = join(binDir, 'node-short-path.cmd')
+    await writeFile(shortPathScript, `@echo off\r\nfor %%A in ("${process.execPath}") do @echo %%~sA\r\n`, 'utf8')
+    const nodeCommand = process.execPath.includes(' ')
+      ? execFileSync(process.env.comspec || 'cmd.exe',
+          // Double-quote wrapper: the probe script path contains spaces (and the
+          // test dirs contain non-ASCII), which a single /c quote would split.
+          ['/d', '/s', '/c', `""${shortPathScript}""`],
+          { windowsVerbatimArguments: true }).toString().trim()
+      : process.execPath
+    await writeFile(commandPath, `@echo off\r\n${nodeCommand} "%~dp0pi-rpc-fixture.cjs" %*\r\n`, 'utf8')
 
     const manager = new CodingAgentRunManager(60_000)
     const events: Array<{ event: string; payload: any }> = []

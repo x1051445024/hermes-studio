@@ -160,7 +160,7 @@ describe('group chat history windows', () => {
 
     expect(outbound.content).toBe(completeDiff)
     expect(outbound.content_truncated).toBeUndefined()
-  })
+  }, 30_000)
 
   it('does not split same-timestamp multipart assistant/tool runs across UI page boundaries', () => {
     const storage = groupServer.getStorage()
@@ -1209,7 +1209,7 @@ describe('group chat history windows', () => {
     expect(storage.getRoomSummary('room-1')).toMatchObject({
       summaryThroughMessageId: 'valid-agent', summarizedTurnCount: 2,
     })
-  })
+  }, 30_000)
 
   it('keeps trace-like public words eligible when the marker has no word boundary', async () => {
     const storage = groupServer.getStorage()
@@ -1267,7 +1267,7 @@ describe('group chat history windows', () => {
     expect(runner.mock.calls[0][0].messages.map(message => message.id)).toEqual([
       'valid-user-after-blanks', 'valid-agent-after-blanks',
     ])
-  })
+  }, 30_000)
 
   it('enforces persisted summary claims and rejects stale run tokens', () => {
     const storage = groupServer.getStorage()

@@ -12,6 +12,12 @@ export interface AgentTargetInput {
   agentId?: string
   agentSessionId?: string
   chatSessionId?: string
+  /** Extra request headers appended to upstream provider requests (from the provider editor). */
+  extraHeaders?: Record<string, string>
+  /** Forward the spawned CLI's own identity headers (originator/user-agent/anthropic-beta/...) upstream. */
+  preserveClientIdentity?: boolean
+  /** Local customization: per-provider egress proxy for upstream requests (from the provider editor). */
+  proxyUrl?: string
 }
 
 export type NormalizedAgentTargetInput<T extends AgentTargetInput> = Omit<T, 'apiMode'> & {

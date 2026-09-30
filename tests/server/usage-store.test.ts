@@ -23,6 +23,7 @@ import {
   updateUsage,
   fillMissingUsageCost,
   getUsage,
+  getLatestModelCallUsage,
   getUsageBatch,
   deleteUsage,
   getRecordedUsageSessionIds,
@@ -63,6 +64,7 @@ describe('Usage Store (JSON fallback)', () => {
       model: '',
       profile: 'default',
       created_at: 0,
+      usage_scope: 'run',
     })
     expect(mockJsonGet).toHaveBeenCalledWith('session_usage', 'session-1')
   })
@@ -93,6 +95,20 @@ describe('Usage Store (JSON fallback)', () => {
     expect(getUsage('session-1', 'coding_agent')).toBeUndefined()
     mockJsonGet.mockReturnValue({ source: 'coding_agent', input_tokens: 0, output_tokens: 0, model: 'native-model' })
     expect(getUsage('session-1', 'coding_agent')).toMatchObject({ input_tokens: 0, output_tokens: 0, model: 'native-model' })
+  })
+
+  it('getLatestModelCallUsage returns the stored row only when it is per-call', () => {
+    mockJsonGet.mockReturnValue({ input_tokens: 200, output_tokens: 80, usage_scope: 'model_call' })
+    expect(getLatestModelCallUsage('session-1')).toEqual(expect.objectContaining({
+      input_tokens: 200,
+      output_tokens: 80,
+      usage_scope: 'model_call',
+    }))
+  })
+
+  it('getLatestModelCallUsage ignores run-scope aggregates', () => {
+    mockJsonGet.mockReturnValue({ input_tokens: 200, output_tokens: 80 })
+    expect(getLatestModelCallUsage('session-1')).toBeUndefined()
   })
 
   it('getUsageBatch returns empty map for empty input', () => {
@@ -267,6 +283,43 @@ describe('Usage Store (SQLite path)', () => {
       profile: 'default',
       created_at: 0,
     })
+  })
+
+  it('getLatestModelCallUsage restricts the query to per-call rows', async () => {
+    let capturedSql = ''
+    getMock.mockImplementation(() => ({
+      input_tokens: 3_614,
+      output_tokens: 179,
+      cache_read_tokens: 225_433,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      model: 'gpt-5.6-luna',
+      profile: 'default',
+      created_at: 0,
+      usage_scope: 'model_call',
+    }))
+    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
+      isSqliteAvailable: () => true,
+      ensureTable: vi.fn(),
+      getDb: () => ({
+        prepare: vi.fn((sql: string) => {
+          capturedSql = sql
+          return { get: getMock }
+        }),
+      }),
+      jsonSet: vi.fn(),
+      jsonGet: vi.fn(),
+      jsonGetAll: vi.fn(),
+      jsonDelete: vi.fn(),
+    }))
+    const { getLatestModelCallUsage } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
+
+    const result = getLatestModelCallUsage('s1')
+
+    expect(capturedSql).toContain("usage_scope = 'model_call'")
+    expect(capturedSql).toContain('ORDER BY id DESC')
+    expect(getMock).toHaveBeenCalledWith('s1')
+    expect(result?.cache_read_tokens).toBe(225_433)
   })
 
   it('getUsageBatch queries with IN clause', async () => {

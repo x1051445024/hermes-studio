@@ -1,6 +1,6 @@
 import { isSqliteAvailable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../infrastructure/database'
 import { randomUUID } from 'crypto'
-import { USAGE_TABLE as TABLE } from '../infrastructure/database/schemas'
+import { CONTEXT_USAGE_TABLE, SESSIONS_TABLE, USAGE_TABLE as TABLE } from '../infrastructure/database/schemas'
 import { finiteCost, emptyCostCoverage, type UsageCost, type UsagePriceSnapshot } from '../services/usage/usage-cost'
 import type {
   LocalUsageStats,
@@ -25,6 +25,72 @@ export interface UsageRecord {
   model: string
   profile: string
   created_at: number
+  usage_scope?: string
+}
+
+const RECORD_COLUMNS = 'session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, model, profile, created_at, usage_scope'
+
+function getContextBoundary(sessionId: string): { historyRevision: number; nativeSessionId: string } {
+  // The sessions table (or the session row) may not exist yet when usage is
+  // recorded first — a missing boundary reads as revision 0 / empty native id,
+  // exactly like a missing session row already does.
+  let session: { history_revision?: unknown; agent_native_session_id?: unknown } | undefined
+  try {
+    session = isSqliteAvailable()
+      ? getDb()!.prepare(`SELECT history_revision, agent_native_session_id FROM ${SESSIONS_TABLE} WHERE id = ?`).get(sessionId) as typeof session
+      : jsonGet(SESSIONS_TABLE, sessionId) as typeof session
+  } catch {
+    session = undefined
+  }
+  return {
+    historyRevision: Number(session?.history_revision || 0),
+    nativeSessionId: String(session?.agent_native_session_id || ''),
+  }
+}
+
+function matchesContextBoundary(
+  row: Record<string, any>,
+  boundary: ReturnType<typeof getContextBoundary>,
+): boolean {
+  return Number(row.context_history_revision || 0) === boundary.historyRevision
+    && String(row.context_native_session_id || '') === boundary.nativeSessionId
+}
+
+export function saveContextUsage(sessionId: string, contextTokens: number): void {
+  if (typeof contextTokens !== 'number' || !Number.isFinite(contextTokens) || contextTokens < 0) return
+  const tokens = Math.floor(contextTokens)
+  const now = Date.now()
+  const boundary = getContextBoundary(sessionId)
+  if (isSqliteAvailable()) {
+    getDb()!.prepare(`
+      INSERT INTO ${CONTEXT_USAGE_TABLE}
+        (session_id, context_tokens, updated_at, context_history_revision, context_native_session_id)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        context_tokens = excluded.context_tokens, updated_at = excluded.updated_at,
+        context_history_revision = excluded.context_history_revision,
+        context_native_session_id = excluded.context_native_session_id
+    `).run(sessionId, tokens, now, boundary.historyRevision, boundary.nativeSessionId)
+  } else {
+    jsonSet(CONTEXT_USAGE_TABLE, sessionId, {
+      context_tokens: tokens,
+      updated_at: now,
+      context_history_revision: boundary.historyRevision,
+      context_native_session_id: boundary.nativeSessionId,
+    })
+  }
+}
+
+export function getContextUsage(sessionId: string): { contextTokens: number; updatedAt: number } | undefined {
+  const row = isSqliteAvailable()
+    ? getDb()!.prepare(`
+        SELECT context_tokens, updated_at, context_history_revision, context_native_session_id
+        FROM ${CONTEXT_USAGE_TABLE} WHERE session_id = ?
+      `).get(sessionId)
+    : jsonGet(CONTEXT_USAGE_TABLE, sessionId)
+  if (!row || typeof row.context_tokens !== 'number' || !Number.isFinite(row.context_tokens) || row.context_tokens < 0) return undefined
+  if (!matchesContextBoundary(row, getContextBoundary(sessionId))) return undefined
+  return { contextTokens: row.context_tokens, updatedAt: Number(row.updated_at || 0) }
 }
 
 function hasUpdatedAtColumn(): boolean {
@@ -47,6 +113,8 @@ export function updateUsage(
     source?: string
     agent?: string
     usageScope?: 'model_call' | 'run'
+    contextHistoryRevision?: number
+    contextNativeSessionId?: string
     purpose?: string
     apiCalls?: number
     inputTokens: number
@@ -73,6 +141,11 @@ export function updateUsage(
   const costUsd = finiteCost(data.costUsd) ?? null
   const costSource = costUsd == null ? 'unknown' : data.costSource || 'reported'
   const costPricing = costUsd == null || !data.costPricing ? null : JSON.stringify(data.costPricing)
+  const boundary = data.usageScope === 'model_call' ? getContextBoundary(sessionId) : undefined
+  if (boundary) {
+    boundary.historyRevision = data.contextHistoryRevision ?? boundary.historyRevision
+    boundary.nativeSessionId = data.contextNativeSessionId ?? boundary.nativeSessionId
+  }
   if (isSqliteAvailable()) {
     const db = getDb()!
     const columns = [
@@ -120,6 +193,11 @@ export function updateUsage(
       costSource,
       costPricing,
     ]
+    if (boundary) {
+      columns.push('context_history_revision', 'context_native_session_id')
+      values.push('?', '?')
+      params.push(boundary.historyRevision, boundary.nativeSessionId)
+    }
     if (hasUpdatedAtColumn()) {
       columns.push('updated_at')
       values.push('?')
@@ -152,6 +230,10 @@ export function updateUsage(
       cost_usd: costUsd,
       cost_source: costSource,
       cost_pricing: costPricing,
+      ...(boundary ? {
+        context_history_revision: boundary.historyRevision,
+        context_native_session_id: boundary.nativeSessionId,
+      } : {}),
     })
     return { id, sessionId }
   }
@@ -215,7 +297,7 @@ export function getRecordedUsageTotals(sessionId: string, source: string): {
 export function getUsage(sessionId: string, source?: string): UsageRecord | undefined {
   if (isSqliteAvailable()) {
     return getDb()!.prepare(
-      `SELECT session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, model, profile, created_at FROM ${TABLE} WHERE session_id = ?${source ? ' AND source = ?' : ''} ORDER BY id DESC LIMIT 1`,
+      `SELECT ${RECORD_COLUMNS} FROM ${TABLE} WHERE session_id = ?${source ? ' AND source = ?' : ''} ORDER BY id DESC LIMIT 1`,
     ).get(...(source ? [sessionId, source] : [sessionId])) as UsageRecord | undefined
   }
   const row = jsonGet(TABLE, sessionId)
@@ -229,7 +311,32 @@ export function getUsage(sessionId: string, source?: string): UsageRecord | unde
     model: row.model ?? '',
     profile: row.profile ?? 'default',
     created_at: row.created_at ?? 0,
+    usage_scope: row.usage_scope ?? 'run',
   }
+}
+
+/**
+ * Newest per-call row for a session, i.e. the one describing the prompt the
+ * provider actually received on the last model call. Run-scope rows aggregate a
+ * whole run, so their token columns are sums over every call and cannot be read
+ * as a context measurement — sessions that only have those get no reading.
+ */
+export function getLatestModelCallUsage(sessionId: string): UsageRecord | undefined {
+  // Accounting survives history resets; context must belong to the current
+  // history revision and native session, not merely the last billed call.
+  const boundary = getContextBoundary(sessionId)
+  if (isSqliteAvailable()) {
+    return getDb()!.prepare(
+      `SELECT ${RECORD_COLUMNS} FROM ${TABLE}
+       WHERE session_id = ? AND usage_scope = 'model_call'
+         AND context_history_revision = ? AND context_native_session_id = ?
+       ORDER BY id DESC LIMIT 1`,
+    ).get(sessionId, boundary.historyRevision, boundary.nativeSessionId) as UsageRecord | undefined
+  }
+  const row = jsonGet(TABLE, sessionId)
+  return row?.usage_scope === 'model_call' && matchesContextBoundary(row, boundary)
+    ? getUsage(sessionId)
+    : undefined
 }
 
 type SessionTokenTotals = Pick<UsageRecord,
@@ -295,8 +402,10 @@ export function getUsageBatch(sessionIds: string[]): Record<string, UsageRecord>
 export function deleteUsage(sessionId: string): void {
   if (isSqliteAvailable()) {
     getDb()!.prepare(`DELETE FROM ${TABLE} WHERE session_id = ?`).run(sessionId)
+    getDb()!.prepare(`DELETE FROM ${CONTEXT_USAGE_TABLE} WHERE session_id = ?`).run(sessionId)
   } else {
     jsonDelete(TABLE, sessionId)
+    jsonDelete(CONTEXT_USAGE_TABLE, sessionId)
   }
 }
 

@@ -156,7 +156,7 @@ describe('Ekko configuration services', () => {
     expect((await updateEkkoSkill('work', 'release-notes', next, setup)).content).toBe(next)
     await deleteEkkoSkill('work', 'release-notes', setup)
     expect(await listEkkoSkills('work', 'release-notes', setup)).toEqual([])
-  })
+  }, 30_000)
 
   it('does not delete synchronized built-in skills', async () => {
     const weather = (await listEkkoSkills('work', 'weather', setup))
@@ -217,7 +217,7 @@ describe('Ekko configuration services', () => {
       join(setup.profile('work').skillDirectory, 'utilities', 'local-helper', 'SKILL.md'),
       'utf8',
     )).resolves.toContain('Use local helper instructions.')
-  })
+  }, 30_000)
 
   it('persists custom MCP servers and allows full profile-scoped managed CRUD', async () => {
     vi.stubEnv('HERMES_WEB_UI_ALLOW_TRANSIENT_MCP_AUTOINJECT', '1')

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 const source = readFileSync(
   'packages/client/src/components/hermes/connections/AppConnectionsPanel.vue',
   'utf8',
-)
+).replace(/\r\n/g, '\n')
 const controllerSource = readFileSync(
   'packages/server/src/modules/studio/controllers/app-connections.ts',
   'utf8',
@@ -20,7 +20,7 @@ describe('App connections scan modal', () => {
     expect(source).toContain("panelView === 'list'")
     expect(source).not.toContain("updatePanelView('messages')")
     expect(source).toContain('<SocialMessagesView v-else embedded')
-    expect(source).toContain('Ekko Studio Mobile')
+    expect(source).toContain('HStudio Mobile')
     expect(source).toContain("const downloadSource = ref<'github' | 'cloudflare'>('cloudflare')")
     expect(source).toContain('fetchStudioVersionManifest()')
     expect(source).toContain('mobileRelease.value.channels.androidApk.version')

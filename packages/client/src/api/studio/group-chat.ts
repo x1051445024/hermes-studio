@@ -22,6 +22,7 @@ export interface RoomInfo {
     guestAgentApproval?: 'owner'
     maxGuestAgentsPerMember?: number
     allowRemoteWorkspaceAccess?: number
+    fullLocalAccess?: number
     agentHandoffEnabled?: number
     agentHandoffMaxDepth?: number | null
     agentHandoffUnlimited?: number
@@ -556,6 +557,14 @@ export async function updateRoomWorkspace(roomId: string, workspace: string): Pr
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace }),
+    })
+}
+
+export async function updateRoomFullLocalAccess(roomId: string, enabled: boolean): Promise<{ room: RoomInfo }> {
+    return request(`/api/studio/group-chat/rooms/${roomId}/full-local-access`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
     })
 }
 

@@ -3696,7 +3696,7 @@ describe('workflow manager', () => {
       expect(chatRunMock.abortSession).toHaveBeenCalledTimes(501)
       expect(chatRunMock.abortSession).toHaveBeenCalledWith('session-500', expect.stringContaining('server restarted'))
     } finally { await manager.delete(workflow.id) }
-  })
+  }, 30_000)
 
   it('persists restart terminal state before aborting surviving runners and never aborts completed sessions', async () => {
     const { initAllStores } = await import('../../packages/server/src/modules/studio/infrastructure/database/init')

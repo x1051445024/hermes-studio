@@ -27,8 +27,8 @@ describe('desktop updater helpers', () => {
   })
 
   it('checks on startup and from the tray without forcing an update', () => {
-    const updaterSource = readFileSync(resolve('packages/desktop/src/main/updater.ts'), 'utf-8')
-    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf-8')
+    const updaterSource = readFileSync(resolve('packages/desktop/src/main/updater.ts'), 'utf-8').replace(/\r\n/g, '\n')
+    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf-8').replace(/\r\n/g, '\n')
 
     expect(mainSource).toContain('checkForDesktopUpdates(true)')
     expect(updaterSource).toContain('checkForDesktopUpdates(false)')
@@ -40,8 +40,8 @@ describe('desktop updater helpers', () => {
   })
 
   it('gracefully stops the current app before starting a downloaded update', () => {
-    const updaterSource = readFileSync(resolve('packages/desktop/src/main/updater.ts'), 'utf-8')
-    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf-8')
+    const updaterSource = readFileSync(resolve('packages/desktop/src/main/updater.ts'), 'utf-8').replace(/\r\n/g, '\n')
+    const mainSource = readFileSync(resolve('packages/desktop/src/main/index.ts'), 'utf-8').replace(/\r\n/g, '\n')
 
     expect(mainSource).toContain('async function prepareAppShutdown(): Promise<void>')
     expect(mainSource).toContain('await stopWebUiServer().catch(() => undefined)')

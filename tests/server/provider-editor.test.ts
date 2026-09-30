@@ -105,7 +105,10 @@ describe('provider editor service', () => {
       'rate_limit_delay',
       'request_timeout_seconds',
       'stale_timeout_seconds',
-      'extra_body',
+      'extra_body',      'extra_headers',
+      'preserve_client_identity',
+      'proxy_url',
+
     ])
     expect(JSON.stringify(detail)).not.toContain(storedCredential)
     expect(detail.revision).toMatch(/^[a-f0-9]{64}$/)

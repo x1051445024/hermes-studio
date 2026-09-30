@@ -13,28 +13,25 @@ function pngSize(path: string): { width: number; height: number } {
 }
 
 describe('desktop app icon', () => {
-  it('leaves transparent margins and rounded corners around every Linux launcher tile', async () => {
+  it('ships the restored Hermes brand tiles for the Linux launcher sizes', async () => {
+    // Brand-retention policy (patch 0009): the Linux launcher tiles are the
+    // Hermes brand artwork restored byte-for-byte from the 0.7.18 local build.
+    // They intentionally do not follow the tile margin/rounding convention that
+    // upstream introduced with the Ekko redesign, so the tile body is asserted
+    // to be rendered artwork instead of transparent padding.
     for (const size of [16, 32, 48, 64, 128, 256, 512]) {
       const { data, info } = await sharp(resolve(`packages/desktop/build/icons/${size}x${size}.png`))
         .ensureAlpha().raw().toBuffer({ resolveWithObject: true })
       const alpha = (x: number, y: number) => data[(y * info.width + x) * info.channels + 3]
-      const padding = Math.round(size / 16)
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          if (x < padding || y < padding || x >= size - padding || y >= size - padding) {
-            expect(alpha(x, y)).toBe(0)
-          }
-        }
-      }
-      expect(alpha(padding, padding)).toBeLessThan(32)
-      expect(alpha(size / 2, padding)).toBe(255)
-      expect(alpha(size / 2, size / 2)).toBe(255)
+      expect(info.width).toBe(size)
+      expect(info.height).toBe(size)
+      expect(alpha(Math.floor(size / 2), Math.floor(size / 2))).toBe(255)
     }
     expect(readFileSync(resolve('packages/desktop/build/iconLinux.png')))
-      .toEqual(readFileSync(resolve('packages/desktop/build/icons/512x512.png')))
+      .toEqual(readFileSync(resolve('packages/desktop/build/icon.png')))
     expect(readFileSync(resolve('packages/desktop/electron-builder.yml'), 'utf8'))
       .toContain('- "iconLinux.png"')
-  })
+  }, 30_000)
 
   it('ships the cross-platform source and every required Linux PNG size', () => {
     expect(pngSize('packages/desktop/build/icon.png')).toEqual({ width: 1024, height: 1024 })

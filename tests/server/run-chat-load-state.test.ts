@@ -8,6 +8,8 @@ const buildDbHistoryMock = vi.fn()
 const buildSnapshotAwareHistoryMock = vi.fn()
 const getRecordedUsageTotalsMock = vi.fn()
 const getUsageMock = vi.fn()
+const getLatestModelCallUsageMock = vi.fn()
+const getContextUsageMock = vi.fn()
 
 vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
   getSession: getSessionMock,
@@ -21,6 +23,8 @@ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () 
   updateUsage: vi.fn(),
   getRecordedUsageTotals: getRecordedUsageTotalsMock,
   getUsage: getUsageMock,
+  getLatestModelCallUsage: getLatestModelCallUsageMock,
+  getContextUsage: getContextUsageMock,
 }))
 
 vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
@@ -43,7 +47,10 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression'
   getOrCreateSession: vi.fn(),
 }))
 
-vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
+// contextTokensFromUsageRecord stays real so the seeded context bar is checked
+// against the shipped cache-inclusive formula, not against a restatement of it.
+vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../packages/server/src/modules/studio/services/chat-run/usage')>()),
   calcAndUpdateUsage: vi.fn(),
   estimateUsageTokensFromMessages: estimateUsageTokensFromMessagesMock,
 }))
@@ -79,6 +86,7 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/response-str
 describe('loadSessionStateFromDb', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getContextUsageMock.mockReturnValue(undefined)
     getSessionMock.mockReturnValue({
       id: 'session-1',
       profile: 'default',
@@ -122,6 +130,14 @@ describe('loadSessionStateFromDb', () => {
       apiCalls: 1,
     })
     getUsageMock.mockReturnValue({ input_tokens: 8_000, output_tokens: 1_000 })
+    getLatestModelCallUsageMock.mockReturnValue({
+      input_tokens: 8_000,
+      output_tokens: 1_000,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      usage_scope: 'model_call',
+    })
   })
 
   it('hydrates persisted usage without reconstructing complete history on resume', async () => {
@@ -134,6 +150,83 @@ describe('loadSessionStateFromDb', () => {
     expect(state.inputTokens).toBe(28_000)
     expect(state.outputTokens).toBe(2_000)
     expect(state.contextTokens).toBe(9_000)
+  })
+
+  it('seeds the context bar with the cached prompt prefix of the last model call', async () => {
+    // Warm coding-agent session: almost the whole prompt is served from the
+    // provider cache, so input+output alone would read 3.8k out of 229k.
+    getLatestModelCallUsageMock.mockReturnValue({
+      input_tokens: 3_614,
+      output_tokens: 179,
+      cache_read_tokens: 225_433,
+      cache_write_tokens: 0,
+      reasoning_tokens: 0,
+      usage_scope: 'model_call',
+    })
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.contextTokens).toBe(229_226)
+  })
+
+  it('leaves the context bar unset when the session has no per-call usage row', async () => {
+    getLatestModelCallUsageMock.mockReturnValue(undefined)
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.contextTokens).toBeUndefined()
+    expect(state.inputTokens).toBe(28_000)
+  })
+
+  it('restores a native context snapshot without using run totals as context', async () => {
+    getSessionMock.mockReturnValue({ id: 'session-1', source: 'coding_agent', agent: 'codex' })
+    getLatestModelCallUsageMock.mockReturnValue(undefined)
+    getContextUsageMock.mockReturnValue({ contextTokens: 66_624, updatedAt: 200 })
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.contextTokens).toBe(66_624)
+    expect(state.inputTokens).toBe(28_000)
+    expect(state.outputTokens).toBe(2_000)
+  })
+
+  it('does not restore an older snapshot over a newer per-call measurement', async () => {
+    getContextUsageMock.mockReturnValue({ contextTokens: 66_624, updatedAt: 100 })
+    getLatestModelCallUsageMock.mockReturnValue({
+      input_tokens: 1_000, output_tokens: 100, cache_read_tokens: 9_000, created_at: 200,
+      usage_scope: 'model_call',
+    })
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.contextTokens).toBe(10_100)
+  })
+
+  it('retains messages and accounting when the optional context snapshot cannot be read', async () => {
+    getContextUsageMock.mockImplementation(() => { throw new Error('snapshot unavailable') })
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.messages).toHaveLength(3)
+    expect(state.inputTokens).toBe(28_000)
+    expect(state.outputTokens).toBe(2_000)
+    expect(state.contextTokens).toBe(9_000)
+  })
+
+  it('can restore a native snapshot even when per-call context lookup fails', async () => {
+    getLatestModelCallUsageMock.mockImplementation(() => { throw new Error('per-call lookup unavailable') })
+    getContextUsageMock.mockReturnValue({ contextTokens: 66_624, updatedAt: 200 })
+    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
+
+    const state = await loadSessionStateFromDb('session-1', new Map())
+
+    expect(state.messages).toHaveLength(3)
+    expect(state.contextTokens).toBe(66_624)
   })
 
   it('restores the persisted tool-result anchor for a Hermes background delegation', async () => {

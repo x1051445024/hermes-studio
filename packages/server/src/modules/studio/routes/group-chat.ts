@@ -84,6 +84,7 @@ groupChatRoutes.post('/api/studio/group-chat/rooms/:roomId/clear-context', ctrl.
 groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/config', ctrl.updateRoomConfig)
 groupChatRoutes.post('/api/studio/group-chat/rooms/:roomId/handoffs/:chainId/continue', ctrl.continueRoomHandoff)
 groupChatRoutes.get('/api/studio/group-chat/rooms/:roomId/handoffs', ctrl.listRoomHandoffs)
+groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/full-local-access', ctrl.updateRoomFullLocalAccess)
 groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/workspace', ctrl.updateRoomWorkspace)
 groupChatRoutes.get('/api/studio/group-chat/rooms/:roomId/summary', ctrl.getRoomSummary)
 groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/summary', ctrl.updateRoomSummary)

@@ -247,10 +247,11 @@ const isCodingAgentSession = computed(() => {
   )
 })
 const isCursorSession = computed(() => chatStore.activeSession?.codingAgentId === 'cursor' || chatStore.activeSession?.agent === 'cursor')
-const showSessionUsage = computed(() => {
-  const session = chatStore.activeSession
-  return isCodingAgentSession.value && session?.codingAgentId !== 'ekko-agent' && session?.agent !== 'ekko-agent'
-})
+// Local patch (context usage): coding-agent sessions show a real context
+// measurement when one exists and stay unknown otherwise. Cumulative billing
+// totals are not a context reading, so the upstream "session usage" mode is
+// disabled here (ekko-agent keeps its own Hermes-style behavior).
+const showSessionUsage = computed(() => false)
 const isForkCommandSession = computed(() => !!chatStore.activeSession && chatStore.activeSession.source !== 'coding_agent')
 const skillPickerItems = computed(() => {
   const byName = new Map<string, SkillInfo>()
@@ -832,21 +833,31 @@ const cumulativeTokens = computed(() => {
   return (session?.inputTokens ?? 0) + (session?.outputTokens ?? 0)
     + (session?.cacheReadTokens ?? 0) + (session?.cacheWriteTokens ?? 0)
 })
-const totalTokens = computed(() => {
+const totalTokens = computed<number | null>(() => {
   if (showSessionUsage.value) return cumulativeTokens.value
-  const context = chatStore.activeSession?.contextTokens
-  if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
-  const input = chatStore.activeSession?.inputTokens ?? 0
-  const output = chatStore.activeSession?.outputTokens ?? 0
+  const session = chatStore.activeSession
+  const context = session?.contextTokens
+  const hasContextTokens = typeof context === 'number' && Number.isFinite(context) && context >= 0
+
+  if (isCodingAgentSession.value) return hasContextTokens ? context : null
+  if (hasContextTokens) return context
+
+  const input = session?.inputTokens ?? 0
+  const output = session?.outputTokens ?? 0
   return input + output
 })
 const showContextUsage = computed(() => !!chatStore.activeSession)
 const showContextLimit = computed(() => !showSessionUsage.value)
+const contextUsageKnown = computed(() => totalTokens.value != null)
 
-const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))
+const remainingTokens = computed(() =>
+  totalTokens.value == null ? null : Math.max(0, contextLength.value - totalTokens.value),
+)
 
 const usagePercent = computed(() =>
-  Math.min((totalTokens.value / contextLength.value) * 100, 100),
+  totalTokens.value == null
+    ? null
+    : Math.min((totalTokens.value / contextLength.value) * 100, 100),
 )
 
 function formatTokens(n: number): string {
@@ -1173,9 +1184,9 @@ function openAttachmentPreview(attachment: Attachment) {
     </div>
 
     <div v-if="showContextUsage" class="context-usage-row">
-      <span class="context-info" :class="{ 'context-warning': showContextLimit && usagePercent > 80 }">
+      <span class="context-info" :class="{ 'context-warning': showContextLimit && usagePercent != null && usagePercent > 80 }">
         <template v-if="showSessionUsage">{{ t('chat.sessionUsage') }} </template>
-        {{ formatTokens(totalTokens) }}
+        {{ contextUsageKnown ? formatTokens(totalTokens ?? 0) : t('chat.contextUnknown') }}
         <template v-if="showContextLimit">
           /
           <NTooltip trigger="hover" :disabled="isMobileViewport">
@@ -1186,17 +1197,19 @@ function openAttachmentPreview(attachment: Attachment) {
             </template>
             <span>{{ t('chat.contextClickToEdit') }}</span>
           </NTooltip>
-          · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
+          <template v-if="contextUsageKnown">
+            · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens ?? 0) }}
+          </template>
         </template>
       </span>
-      <div v-if="showContextLimit" class="context-bar">
+      <div v-if="showContextLimit && contextUsageKnown" class="context-bar">
         <div
           class="context-bar-fill"
           :class="{
-            'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
-            'context-bar-danger': usagePercent > 80,
+            'context-bar-warn': usagePercent != null && usagePercent > 60 && usagePercent <= 80,
+            'context-bar-danger': usagePercent != null && usagePercent > 80,
           }"
-          :style="{ width: `${usagePercent}%` }"
+          :style="{ width: `${usagePercent ?? 0}%` }"
         />
       </div>
     </div>

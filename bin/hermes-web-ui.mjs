@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { spawn, execSync, execFileSync } from 'child_process'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
