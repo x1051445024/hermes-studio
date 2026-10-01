@@ -1,0 +1,2447 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Date: Tue, 29 Sep 2026 14:10:00 +0800
+Subject: [PATCH] feat(usage): per-model-call context accounting; carry misc
+ drift
+
+Coding-agent proxy runs record per-call usage through a per-request
+observer (createProxyUsageObserver) instead of the shared handler, tag
+rows with usage_scope=model_call plus the context boundary (history
+revision and native session id), and persist a session_context_usage
+snapshot (table schema already introduced with 0005) so the chat context
+bar reflects the latest model call - cache read/write included - instead
+of near-zero lifetime billing totals. /context now uses the latest
+request's context while /usage keeps accumulated totals; cleared or
+rotated context boundaries stay unknown rather than showing stale
+numbers.
+
+Carried faithfully from the build tree: chat.contextUnknown translations
+for nine locales, npm lockfile libc-field removals (21 blocks, npm
+version drift), a run of trailing-whitespace lines in run-manager.ts and
+services/index.ts, and added usage/proxy tests (context-usage-store,
+proxy-request-usage, e2e context-usage and updated suites).
+---
+ package-lock.json                             |  63 -----
+ .../src/components/hermes/chat/ChatInput.vue  |  72 ++---
+ packages/client/src/i18n/locales/ar.ts        |   2 +-
+ packages/client/src/i18n/locales/de.ts        |   2 +-
+ packages/client/src/i18n/locales/es.ts        |   2 +-
+ packages/client/src/i18n/locales/fr.ts        |   2 +-
+ packages/client/src/i18n/locales/ja.ts        |   2 +-
+ packages/client/src/i18n/locales/ko.ts        |   2 +-
+ packages/client/src/i18n/locales/pt.ts        |   2 +-
+ packages/client/src/i18n/locales/ru.ts        |   2 +-
+ packages/client/src/i18n/locales/zh-TW.ts     |   2 +-
+ .../services/claude-code/proxy.ts             |   8 +-
+ .../coding-agents/services/codex/proxy.ts     |   8 +-
+ .../services/runtime/run-manager.ts           | 208 ++++++++++++---
+ .../coding-agents/services/session-command.ts |  35 ++-
+ .../studio/repositories/session-store.ts      |   4 +-
+ .../studio/repositories/usage-store.ts        | 105 +++++++-
+ .../studio/services/chat-run/load-state.ts    |   9 +-
+ .../modules/studio/services/chat-run/usage.ts |  47 +++-
+ .../studio/services/usage/usage-recorder.ts   |  47 +++-
+ tests/client/chat-input-draft.test.ts         |  42 +++
+ tests/e2e/context-usage.spec.ts               |  80 ++++++
+ tests/server/agent-runner-utils.test.ts       | 178 ++++++++++++-
+ .../coding-agent-session-command.test.ts      |  59 ++++-
+ tests/server/context-usage-store.test.ts      | 245 ++++++++++++++++++
+ tests/server/proxy-request-usage.test.ts      |  56 ++++
+ tests/server/run-chat-load-state.test.ts      |  95 ++++++-
+ tests/server/run-chat-usage-cursor.test.ts    |  48 +++-
+ tests/server/usage-recorder.test.ts           |  37 ++-
+ tests/server/usage-store.test.ts              |  53 ++++
+ 30 files changed, 1345 insertions(+), 172 deletions(-)
+ create mode 100644 tests/e2e/context-usage.spec.ts
+ create mode 100644 tests/server/context-usage-store.test.ts
+ create mode 100644 tests/server/proxy-request-usage.test.ts
+
+diff --git a/package-lock.json b/package-lock.json
+index adbe026..fa43636 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1464,9 +1464,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1483,9 +1480,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1502,9 +1496,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1521,9 +1512,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1540,9 +1528,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1559,9 +1544,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1578,9 +1560,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1597,9 +1576,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -1616,9 +1592,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1641,9 +1614,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1666,9 +1636,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1691,9 +1658,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1716,9 +1680,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1741,9 +1702,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1766,9 +1724,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -1791,9 +1746,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2307,9 +2259,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2331,9 +2280,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2355,9 +2301,6 @@
+         "riscv64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2379,9 +2322,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2403,9 +2343,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+diff --git a/packages/client/src/components/hermes/chat/ChatInput.vue b/packages/client/src/components/hermes/chat/ChatInput.vue
+index 409ad39..9351d65 100644
+--- a/packages/client/src/components/hermes/chat/ChatInput.vue
++++ b/packages/client/src/components/hermes/chat/ChatInput.vue
+@@ -844,19 +844,29 @@ watch(
+   { flush: 'post' },
+ )
+ 
+-const totalTokens = computed(() => {
+-  const context = chatStore.activeSession?.contextTokens
+-  if (typeof context === 'number' && Number.isFinite(context) && context > 0) return context
+-  const input = chatStore.activeSession?.inputTokens ?? 0
+-  const output = chatStore.activeSession?.outputTokens ?? 0
++const totalTokens = computed<number | null>(() => {
++  const session = chatStore.activeSession
++  const context = session?.contextTokens
++  const hasContextTokens = typeof context === 'number' && Number.isFinite(context) && context >= 0
++
++  if (isCodingAgentSession.value) return hasContextTokens ? context : null
++  if (hasContextTokens) return context
++
++  const input = session?.inputTokens ?? 0
++  const output = session?.outputTokens ?? 0
+   return input + output
+ })
+ const showContextUsage = computed(() => !!chatStore.activeSession)
++const contextUsageKnown = computed(() => totalTokens.value != null)
+ 
+-const remainingTokens = computed(() => Math.max(0, contextLength.value - totalTokens.value))
++const remainingTokens = computed(() =>
++  totalTokens.value == null ? null : Math.max(0, contextLength.value - totalTokens.value),
++)
+ 
+ const usagePercent = computed(() =>
+-  Math.min((totalTokens.value / contextLength.value) * 100, 100),
++  totalTokens.value == null
++    ? null
++    : Math.min((totalTokens.value / contextLength.value) * 100, 100),
+ )
+ 
+ function formatTokens(n: number): string {
+@@ -1205,29 +1215,31 @@ function openAttachmentPreview(attachment: Attachment) {
+         @mousedown="startResize"
+         @dblclick="resetTextareaHeight"
+       ></div>
+-      <div v-if="showContextUsage" class="context-usage-row">
+-        <span class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
+-          {{ formatTokens(totalTokens) }} /
+-          <NTooltip trigger="hover" :disabled="isMobileViewport">
+-            <template #trigger>
+-              <span class="context-limit-editable" @click="handleEditContextLimit">
+-                {{ formatTokens(contextLength) }}
+-              </span>
+-            </template>
+-            <span>{{ t('chat.contextClickToEdit') }}</span>
+-          </NTooltip>
+-          · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
+-        </span>
+-        <div class="context-bar">
+-          <div
+-            class="context-bar-fill"
+-            :class="{
+-              'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
+-              'context-bar-danger': usagePercent > 80,
+-            }"
+-            :style="{ width: `${usagePercent}%` }"
+-          />
+-        </div>
++    <div v-if="showContextUsage" class="context-usage-row">
++      <span class="context-info" :class="{ 'context-warning': usagePercent != null && usagePercent > 80 }">
++        {{ contextUsageKnown ? formatTokens(totalTokens ?? 0) : t('chat.contextUnknown') }} /
++        <NTooltip trigger="hover" :disabled="isMobileViewport">
++          <template #trigger>
++            <span class="context-limit-editable" @click="handleEditContextLimit">
++              {{ formatTokens(contextLength) }}
++            </span>
++          </template>
++          <span>{{ t('chat.contextClickToEdit') }}</span>
++        </NTooltip>
++        <template v-if="contextUsageKnown">
++          · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens ?? 0) }}
++        </template>
++      </span>
++      <div v-if="contextUsageKnown" class="context-bar">
++        <div
++          class="context-bar-fill"
++          :class="{
++            'context-bar-warn': usagePercent != null && usagePercent > 60 && usagePercent <= 80,
++            'context-bar-danger': usagePercent != null && usagePercent > 80,
++          }"
++          :style="{ width: `${usagePercent ?? 0}%` }"
++        />
++      </div>
+       </div>
+       <textarea
+         ref="textareaRef"
+diff --git a/packages/client/src/i18n/locales/ar.ts b/packages/client/src/i18n/locales/ar.ts
+index 0412536..917c508 100644
+--- a/packages/client/src/i18n/locales/ar.ts
++++ b/packages/client/src/i18n/locales/ar.ts
+@@ -832,7 +832,7 @@ export default {
+ 
+   // Chat
+   chat: {
+-    contextRemaining: 'متبقٍ',
++    contextUnknown: 'غير معروف', contextRemaining: 'متبقٍ',
+     contextClickToEdit: 'اضغط لتعديل طول السياق',
+     contextEditTitle: 'تعديل طول السياق',
+     contextEditDesc: 'حدّد حد طول السياق للنموذج الحالي (بالتوكن)',
+diff --git a/packages/client/src/i18n/locales/de.ts b/packages/client/src/i18n/locales/de.ts
+index 37667b0..393b3c2 100644
+--- a/packages/client/src/i18n/locales/de.ts
++++ b/packages/client/src/i18n/locales/de.ts
+@@ -818,7 +818,7 @@ export default {
+ 
+   // Chat
+   chat: {
+-    contextRemaining: 'übrig',
++    contextUnknown: 'unbekannt', contextRemaining: 'übrig',
+     contextClickToEdit: 'Klicken zum Bearbeiten der Kontextlänge',
+     contextEditTitle: 'Kontextlänge bearbeiten',
+     contextEditDesc: 'Kontextlängenlimit für aktuelles Modell festlegen (in Tokens)',
+diff --git a/packages/client/src/i18n/locales/es.ts b/packages/client/src/i18n/locales/es.ts
+index fb1b73f..6dbed9d 100644
+--- a/packages/client/src/i18n/locales/es.ts
++++ b/packages/client/src/i18n/locales/es.ts
+@@ -818,7 +818,7 @@ export default {
+ 
+   // Chat
+   chat: {
+-    contextRemaining: 'restante',
++    contextUnknown: 'desconocido', contextRemaining: 'restante',
+     contextClickToEdit: 'Haz clic para editar la longitud del contexto',
+     contextEditTitle: 'Editar longitud del contexto',
+     contextEditDesc: 'Establecer el límite de longitud del contexto para el modelo actual (en tokens)',
+diff --git a/packages/client/src/i18n/locales/fr.ts b/packages/client/src/i18n/locales/fr.ts
+index 924416c..b5de3a3 100644
+--- a/packages/client/src/i18n/locales/fr.ts
++++ b/packages/client/src/i18n/locales/fr.ts
+@@ -818,7 +818,7 @@ export default {
+ 
+   // Chat
+   chat: {
+-    contextRemaining: 'restant',
++    contextUnknown: 'inconnu', contextRemaining: 'restant',
+     contextClickToEdit: 'Cliquez pour modifier la longueur du contexte',
+     contextEditTitle: 'Modifier la longueur du contexte',
+     contextEditDesc: 'Définir la limite de longueur du contexte pour le modèle actuel (en tokens)',
+diff --git a/packages/client/src/i18n/locales/ja.ts b/packages/client/src/i18n/locales/ja.ts
+index 471b85e..291ebf1 100644
+--- a/packages/client/src/i18n/locales/ja.ts
++++ b/packages/client/src/i18n/locales/ja.ts
+@@ -818,7 +818,7 @@ export default {
+ 
+   // チャット
+   chat: {
+-    contextRemaining: '残り',
++    contextUnknown: '不明', contextRemaining: '残り',
+     contextClickToEdit: 'クリックしてコンテキスト長を編集',
+     contextEditTitle: 'コンテキスト長を編集',
+     contextEditDesc: '現在のモデルのコンテキスト長制限を設定（トークン数）',
+diff --git a/packages/client/src/i18n/locales/ko.ts b/packages/client/src/i18n/locales/ko.ts
+index 6e222e3..f11d30a 100644
+--- a/packages/client/src/i18n/locales/ko.ts
++++ b/packages/client/src/i18n/locales/ko.ts
+@@ -818,7 +818,7 @@ export default {
+ 
+   // 채팅
+   chat: {
+-    contextRemaining: '남음',
++    contextUnknown: '알 수 없음', contextRemaining: '남음',
+     contextClickToEdit: '클릭하여 컨텍스트 길이 편집',
+     contextEditTitle: '컨텍스트 길이 편집',
+     contextEditDesc: '현재 모델의 컨텍스트 길이 제한 설정 (토큰 수)',
+diff --git a/packages/client/src/i18n/locales/pt.ts b/packages/client/src/i18n/locales/pt.ts
+index 70721d6..54e55b9 100644
+--- a/packages/client/src/i18n/locales/pt.ts
++++ b/packages/client/src/i18n/locales/pt.ts
+@@ -818,7 +818,7 @@ export default {
+ 
+   // Chat
+   chat: {
+-    contextRemaining: 'restante',
++    contextUnknown: 'desconhecido', contextRemaining: 'restante',
+     contextClickToEdit: 'Clique para editar o tamanho do contexto',
+     contextEditTitle: 'Editar tamanho do contexto',
+     contextEditDesc: 'Definir o limite de tamanho do contexto para o modelo atual (em tokens)',
+diff --git a/packages/client/src/i18n/locales/ru.ts b/packages/client/src/i18n/locales/ru.ts
+index a9dd45a..ee2cbc1 100644
+--- a/packages/client/src/i18n/locales/ru.ts
++++ b/packages/client/src/i18n/locales/ru.ts
+@@ -735,7 +735,7 @@ export default {
+ 
+ 
+   chat: {
+-    contextRemaining: 'Осталось',
++    contextUnknown: 'неизвестно', contextRemaining: 'Осталось',
+     contextClickToEdit: 'Нажмите, чтобы изменить размер контекста',
+     contextEditTitle: 'Изменить размер контекста',
+     contextEditDesc: 'Установите лимит размера контекста для текущей модели (в токенах)',
+diff --git a/packages/client/src/i18n/locales/zh-TW.ts b/packages/client/src/i18n/locales/zh-TW.ts
+index ec2a436..cea2caa 100644
+--- a/packages/client/src/i18n/locales/zh-TW.ts
++++ b/packages/client/src/i18n/locales/zh-TW.ts
+@@ -832,7 +832,7 @@ export default {
+ 
+   // 對話
+   chat: {
+-    contextRemaining: '剩餘',
++    contextUnknown: '未知', contextRemaining: '剩餘',
+     contextClickToEdit: '點擊編輯上下文長度',
+     contextEditTitle: '編輯上下文長度',
+     contextEditDesc: '設定目前模型的上下文長度限制（token 數量）',
+diff --git a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+index dd94af2..a4828b7 100644
+--- a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+@@ -35,7 +35,9 @@ export type { ApiMode } from '../../protocol/types'
+ 
+ export interface ClaudeCodeProxyTargetInput extends AgentTargetInput {}
+ 
+-type ClaudeCodeProxyTarget = RegisteredAgentTarget<ClaudeCodeProxyTargetInput>
++type ClaudeCodeProxyTarget = RegisteredAgentTarget<ClaudeCodeProxyTargetInput> & {
++  observeUsage?: (event: CanonicalResponsesEvent) => void
++}
+ 
+ const targetRegistry = new AgentTargetRegistry<ClaudeCodeProxyTargetInput>(
+   input => [
+@@ -87,7 +89,7 @@ function requireTarget(ctx: Context): ClaudeCodeProxyTarget | null {
+     ctx.body = { type: 'error', error: { type: 'authentication_error', message: 'Invalid Claude proxy token' } }
+     return null
+   }
+-  return target
++  return { ...target, observeUsage: codingAgentRunManager.createProxyUsageObserver(target.agentSessionId) }
+ }
+ 
+ function anthropicMessagesUrl(target: ClaudeCodeProxyTarget): string {
+@@ -396,7 +398,7 @@ function observeResponsesEvents(target: ClaudeCodeProxyTarget, events: AsyncIter
+   void (async () => {
+     try {
+       for await (const event of events) {
+-        codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
++        target.observeUsage?.(event)
+         codingAgentRunManager.handleResponseEvent(target.agentSessionId, event)
+       }
+     } catch (err) {
+diff --git a/packages/server/src/modules/coding-agents/services/codex/proxy.ts b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+index 7bab1d6..a06b6f7 100644
+--- a/packages/server/src/modules/coding-agents/services/codex/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+@@ -31,7 +31,9 @@ export interface CodexProxyTargetInput extends AgentTargetInput {
+   profile: string
+ }
+ 
+-type CodexProxyTarget = RegisteredAgentTarget<CodexProxyTargetInput>
++type CodexProxyTarget = RegisteredAgentTarget<CodexProxyTargetInput> & {
++  observeUsage?: (event: CanonicalResponsesEvent) => void
++}
+ 
+ const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
+   input => [
+@@ -108,7 +110,7 @@ function requireTarget(ctx: Context): CodexProxyTarget | null {
+     ctx.body = { error: { type: 'authentication_error', message: 'Invalid Codex proxy token' } }
+     return null
+   }
+-  return target
++  return { ...target, observeUsage: codingAgentRunManager.createProxyUsageObserver(target.agentSessionId) }
+ }
+ 
+ function chatCompletionsUrl(target: CodexProxyTarget): string {
+@@ -300,7 +302,7 @@ function responseEventForCodexClient(target: CodexProxyTarget, event: CanonicalR
+ function observableResponsesEvents(target: CodexProxyTarget, events: AsyncIterable<CanonicalResponsesEvent>): AsyncIterable<CanonicalResponsesEvent> {
+ async function* observe() {
+     for await (const event of normalizeResponsesSseEvents(events)) {
+-      codingAgentRunManager.handleProxyUsageEvent(target.agentSessionId, event)
++      target.observeUsage?.(event)
+       const clientEvent = responseEventForCodexClient(target, event)
+       // Grok and OpenCode print the same model activity through their native
+       // stdout streams. The proxy remains responsible for transport and usage
+diff --git a/packages/server/src/modules/coding-agents/services/runtime/run-manager.ts b/packages/server/src/modules/coding-agents/services/runtime/run-manager.ts
+index 8b19a01..922376d 100644
+--- a/packages/server/src/modules/coding-agents/services/runtime/run-manager.ts
++++ b/packages/server/src/modules/coding-agents/services/runtime/run-manager.ts
+@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from 'child_process'
+ import { createSession, addMessage, getSession, updateSession, updateSessionStats } from '../../../studio/public/sessions'
+ import type { ApiMode, CodingAgentImageInput } from '../../protocol/types'
+ import { logger } from '../../../studio/public/logging'
+-import { normalizeTokenUsage, recordSessionUsage } from '../../../studio/public/usage'
++import { contextTokensFromModelCall, normalizeTokenUsage, recordSessionContextUsage, recordSessionUsage, type NormalizedTokenUsage } from '../../../studio/public/usage'
+ import {
+   applyResponseStreamEvent,
+   calcAndUpdateUsage,
+@@ -156,6 +156,7 @@ interface PiRpcPendingRequest {
+ interface ManagedCodingAgentRun {
+   id: string
+   launch: CodingAgentRunLaunch
++  contextHistoryRevision: number
+   pty?: { pid: number; write: (data: string) => void; kill: (signal?: string) => void; onData: (cb: (data: string) => void) => void; onExit: (cb: (event: { exitCode: number }) => void) => void }
+   state: SessionState
+   runMarker?: string
+@@ -176,6 +177,12 @@ interface ManagedCodingAgentRun {
+   printCompleted?: boolean
+   responseStartEmitted?: boolean
+   terminalEventHandled?: boolean
++  /**
++   * Set once this turn has persisted per-call `model_call` rows of its own, so
++   * the terminal handler knows not to also write the turn aggregate as a `run`
++   * row — the lifetime totals sum every scope and would count the turn twice.
++   */
++  recordedPerCallUsage?: boolean
+   acceptingPrintEvent?: boolean
+   printToolBlocks?: Map<number, { id: string; name: string; arguments: string; done: boolean }>
+   nativeResumeReady?: boolean
+@@ -669,6 +676,7 @@ export class CodingAgentRunManager {
+       const run: ManagedCodingAgentRun = {
+         id: runId,
+         launch,
++        contextHistoryRevision: getSession(launch.sessionId)?.history_revision ?? 0,
+         state,
+         lastActiveAt: Date.now(),
+         startedAt: Date.now(),
+@@ -729,6 +737,7 @@ export class CodingAgentRunManager {
+     const run: ManagedCodingAgentRun = {
+       id: runId,
+       launch,
++      contextHistoryRevision: getSession(launch.sessionId)?.history_revision ?? 0,
+       pty: proc,
+       state,
+       lastActiveAt: Date.now(),
+@@ -776,6 +785,7 @@ export class CodingAgentRunManager {
+     if (!text && images.length === 0) throw new Error('Input is required')
+     const systemPrompt = String(options.systemPrompt || '').trim()
+     this.ensureDbSession(run)
++    run.contextHistoryRevision = getSession(sessionId)?.history_revision ?? 0
+     run.assistantMessageId = undefined
+     const messageId = this.addUserMessage(run, options.storageInput ?? text)
+     this.touch(run)
+@@ -1026,37 +1036,95 @@ export class CodingAgentRunManager {
+   }
+ 
+   handleProxyUsageEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
+-    if (!agentSessionId || event.type !== 'response.completed') return
+-    const run = this.runs.get(agentSessionId)
+-    if (!run || run.launch.mode !== 'scoped') return
+-    const final = (event.data as any).response || event.data
+-    if (!final?.usage) return
+-    const usage = normalizeTokenUsage(final.usage, {}, {
+-      inputIncludesCache: run.launch.apiMode !== 'anthropic_messages',
+-    })
+-    if (usage.isEstimated) {
+-      logger.warn({
+-        runId: run.id,
+-        sessionId: run.launch.sessionId,
+-        responseId: final?.id,
+-        provider: run.launch.provider,
+-        model: final?.model || run.launch.model,
+-      }, '[coding-agent-run] scoped proxy response omitted token usage')
++    this.createProxyUsageObserver(agentSessionId)(event)
++  }
++
++  createProxyUsageObserver(agentSessionId: string | undefined): (event: CanonicalResponsesEvent) => void {
++    const activeRun = agentSessionId ? this.runs.get(agentSessionId) : undefined
++    if (!activeRun || activeRun.launch.mode !== 'scoped') return () => {}
++    // Only request-owned accounting metadata survives the live runner.
++    const run = {
++      id: activeRun.id,
++      contextHistoryRevision: activeRun.contextHistoryRevision,
++      launch: {
++        sessionId: activeRun.launch.sessionId,
++        agentId: activeRun.launch.agentId,
++        agentNativeSessionId: activeRun.launch.agentNativeSessionId,
++        apiMode: activeRun.launch.apiMode,
++        provider: activeRun.launch.provider,
++        model: activeRun.launch.model,
++        profile: activeRun.launch.profile,
++      },
++    }
++    return (event) => {
++      if (event.type !== 'response.completed') return
++      const final = (event.data as any).response || event.data  
++      if (!final?.usage) return  
++      const usage = normalizeTokenUsage(final.usage, {}, {  
++        inputIncludesCache: run.launch.apiMode !== 'anthropic_messages',  
++      })  
++      if (usage.isEstimated) {  
++        logger.warn({  
++          runId: run.id,  
++          sessionId: run.launch.sessionId,  
++          responseId: final?.id,  
++          provider: run.launch.provider,  
++          model: final?.model || run.launch.model,  
++        }, '[coding-agent-run] scoped proxy response omitted token usage')  
++        return  
++      }  
++      recordSessionUsage({  
++        sessionId: run.launch.sessionId,  
++        runId: final?.id,  
++        source: 'coding_agent',  
++        agent: usageCodingAgent(run.launch.agentId),
++        usageScope: 'model_call',
++        contextHistoryRevision: run.contextHistoryRevision ?? 0,
++        contextNativeSessionId: run.launch.agentNativeSessionId || '',
++        apiCalls: 1,
++        usage,  
++        profile: run.launch.profile,  
++        model: final?.model || run.launch.model,  
++        provider: run.launch.provider,  
++        isEstimated: false,  
++      })  
++      // One coding-agent run can span dozens of provider calls. Waiting for the  
++      // run to finish before refreshing leaves the context bar showing the  
++      // previous turn's number for minutes, so publish each call as it lands.  
++      const current = this.runs.get(run.id)
++      if (current && current.contextHistoryRevision === run.contextHistoryRevision
++        && (current.launch.agentNativeSessionId || '') === (run.launch.agentNativeSessionId || '')) {
++        this.publishModelCallContext(current, usage)
++      }
++    }
++  }
++
++  /**
++   * Push an already-measured context size to the session's context bar.
++   *
++   * Persist separately from the billable ledger so native measurements survive
++   * reloads without double-counting the terminal run aggregate.
++   */
++  private publishContextTokens(run: ManagedCodingAgentRun, contextTokens: number | null | undefined) {
++    if (run.exited || run.stoppedByUser) return
++    if (contextTokens == null || !Number.isFinite(contextTokens) || contextTokens <= 0) return
++    try {
++      const session = getSession(run.launch.sessionId)
++      if (!session || session.history_revision !== (run.contextHistoryRevision ?? 0)
++        || session.agent_native_session_id !== (run.launch.agentNativeSessionId || '')) return
++    } catch (err) {
++      logger.warn({ err, sessionId: run.launch.sessionId }, '[coding-agent-run] failed to validate context boundary')
+       return
+     }
+-    recordSessionUsage({
+-      sessionId: run.launch.sessionId,
+-      runId: final?.id,
+-      source: 'coding_agent',
+-      agent: usageCodingAgent(run.launch.agentId),
+-      usageScope: 'model_call',
+-      apiCalls: 1,
+-      usage,
+-      profile: run.launch.profile,
+-      model: final?.model || run.launch.model,
+-      provider: run.launch.provider,
+-      isEstimated: false,
+-    })
++    recordSessionContextUsage(run.launch.sessionId, contextTokens)
++    updateContextTokenUsage(run.launch.sessionId, run.state, (event: string, payload: any) => {
++      this.emitToChat(run.launch.sessionId, event, payload)
++    }, contextTokens)
++  }
++
++  private publishModelCallContext(run: ManagedCodingAgentRun, usage: NormalizedTokenUsage) {
++    const context = contextTokensFromModelCall(usage)
++    this.publishContextTokens(run, context.inputTokens + context.outputTokens)
+   }
+ 
+   handleResponseEvent(agentSessionId: string | undefined, event: CanonicalResponsesEvent) {
+@@ -1136,7 +1204,11 @@ export class CodingAgentRunManager {
+     if (isTerminalEvent) {
+       run.assistantMessageId = this.persistTerminalResponse(run)
+       const final = (storageSafeResponseEvent.data as any).response || storageSafeResponseEvent.data
+-      if (run.launch.mode !== 'scoped' && final?.usage) {
++      // Turn aggregate, recorded only when nothing finer was captured: scoped
++      // runs are billed per call by the proxy, and agents that stream their own
++      // per-call usage set recordedPerCallUsage. Lifetime totals sum every
++      // scope, so writing both would bill this turn twice.
++      if (run.launch.mode !== 'scoped' && !run.recordedPerCallUsage && final?.usage) {
+         const usage = normalizeTokenUsage(final.usage)
+         if (!usage.isEstimated) {
+           recordSessionUsage({
+@@ -1816,6 +1888,7 @@ export class CodingAgentRunManager {
+     run.printCompleted = false
+     run.responseStartEmitted = false
+     run.terminalEventHandled = false
++    run.recordedPerCallUsage = false
+     run.printToolBlocks = new Map()
+     run.currentChildStderr = ''
+     run.runMarker = undefined
+@@ -1977,6 +2050,7 @@ export class CodingAgentRunManager {
+     }
+ 
+     if ((event.type === 'assistant' || event.type === 'user') && event.message) {
++      if (event.type === 'assistant') this.recordClaudePrintCallUsage(run, event)
+       this.handleClaudeTopLevelMessage(run, event.message)
+       return
+     }
+@@ -2041,6 +2115,50 @@ export class CodingAgentRunManager {
+     }
+   }
+ 
++  /**
++   * Record one Claude Code assistant turn as a per-call usage row.
++   *
++   * Runs that are not proxied talk to Anthropic directly, so the CLI's own
++   * stream is the only place their token counts appear. The `result` event at
++   * the end carries the turn aggregate, which cannot be read as a context
++   * measurement — a turn with twenty tool calls sums twenty prompts. Each
++   * `assistant` message instead reports exactly one call.
++   */
++  private recordClaudePrintCallUsage(run: ManagedCodingAgentRun, event: any) {
++    // Scoped runs already get a model_call row per provider call from the
++    // proxy; recording the CLI's copy as well would double the totals.
++    if (run.launch.mode === 'scoped') return
++    // Subagent turns run in a window of their own, so their usage says nothing
++    // about how full the main thread's context is.
++    if (event.parent_tool_use_id || event.parentToolUseId) return
++    const message = event.message
++    const messageId = String(message?.id || '').trim()
++    if (!messageId || !message?.usage) return
++    // Anthropic reports input_tokens exclusive of the cached prefix, so the
++    // cache columns must stay separate rather than be subtracted out.
++    const usage = normalizeTokenUsage(message.usage)
++    if (usage.isEstimated) return
++    recordSessionUsage({
++      sessionId: run.launch.sessionId,
++      // Message ids are stable per call, so a replayed or duplicated line
++      // collapses onto the same row instead of inflating the totals.
++      runId: messageId,
++      source: 'coding_agent',
++      agent: usageCodingAgent(run.launch.agentId),
++      usageScope: 'model_call',
++      contextHistoryRevision: run.contextHistoryRevision ?? 0,
++      contextNativeSessionId: run.launch.agentNativeSessionId || '',
++      apiCalls: 1,
++      usage,
++      profile: run.launch.profile,
++      model: String(message.model || '') || run.launch.model,
++      provider: run.launch.provider,
++      isEstimated: false,
++    })
++    run.recordedPerCallUsage = true
++    this.publishModelCallContext(run, usage)
++  }
++
+   private handleClaudeTopLevelMessage(run: ManagedCodingAgentRun, message: any) {
+     const role = String(message?.role || '')
+     const content = Array.isArray(message?.content) ? message.content : []
+@@ -2582,6 +2700,8 @@ export class CodingAgentRunManager {
+             source: 'coding_agent',
+             agent: 'opencode',
+             usageScope: 'model_call',
++            contextHistoryRevision: run.contextHistoryRevision ?? 0,
++            contextNativeSessionId: run.launch.agentNativeSessionId || '',
+             apiCalls: 1,
+             usage,
+             profile: run.launch.profile,
+@@ -2814,13 +2934,12 @@ export class CodingAgentRunManager {
+       return
+     }
+ 
+-    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(event))
+-
+     const method = String(event.method || '').trim()
+     if (method) {
+-      this.handleCodexProtocolEvent(run, method, event.params || {})
++      this.handleCodexProtocolEvent(run, method, event.params || {}, this.codexNativeSessionIdFrom(event))
+       return
+     }
++    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(event))
+ 
+     const msg = event.msg || event.message
+     if (msg && (typeof msg.content === 'string' || typeof msg.text === 'string')) {
+@@ -2858,8 +2977,14 @@ export class CodingAgentRunManager {
+     }
+   }
+ 
+-  private handleCodexProtocolEvent(run: ManagedCodingAgentRun, method: string, params: any) {
+-    this.recordCodexNativeSessionId(run, this.codexNativeSessionIdFrom(params))
++  private handleCodexProtocolEvent(
++    run: ManagedCodingAgentRun, method: string, params: any,
++    nativeSessionId = this.codexNativeSessionIdFrom(params),
++  ) {
++    // A delayed measurement cannot select a different thread; lifecycle events can.
++    if (method === 'thread/tokenUsage/updated' && nativeSessionId
++      && run.launch.agentNativeSessionId && nativeSessionId !== run.launch.agentNativeSessionId) return
++    this.recordCodexNativeSessionId(run, nativeSessionId)
+     if (method === 'thread/started') {
+       this.recordCodexNativeSessionId(run, String(params.thread_id || params.threadId || '').trim())
+       return
+@@ -2885,6 +3010,17 @@ export class CodingAgentRunManager {
+       this.handleCodexItemCompleted(run, params.item || params)
+       return
+     }
++    if (method === 'thread/tokenUsage/updated') {
++      // `last` is the most recent model call, `total` sums the thread, so only
++      // `last` measures what currently occupies the window. For a Codex run
++      // that talks to the provider directly this is the sole context source —
++      // turn/completed reports a turn aggregate, which over-reports a
++        // multi-call turn. Keep the snapshot separate from billable usage.
++      const tokenUsage = params?.tokenUsage || params?.token_usage
++      const last = tokenUsage?.last
++      this.publishContextTokens(run, compactTokenNumber(last?.totalTokens ?? last?.total_tokens))
++      return
++    }
+     if (method === 'turn/completed') {
+       run.codexPendingUsage = params.usage
+       return
+diff --git a/packages/server/src/modules/coding-agents/services/session-command.ts b/packages/server/src/modules/coding-agents/services/session-command.ts
+index bacb701..ca9d35c 100644
+--- a/packages/server/src/modules/coding-agents/services/session-command.ts
++++ b/packages/server/src/modules/coding-agents/services/session-command.ts
+@@ -130,19 +130,42 @@ export async function handleCodingAgentSessionCommand(
+         model: data.model || row?.model || undefined,
+         provider: data.provider || row?.provider || undefined,
+       })
+-      const totalTokens = usage.inputTokens + usage.outputTokens
+-      const percent = contextWindow > 0 ? Math.round((totalTokens / contextWindow) * 1000) / 10 : 0
++      const usageTotalTokens = usage.inputTokens + usage.outputTokens
++      const contextInputTokens = usage.contextInputTokens
++      const contextOutputTokens = usage.contextOutputTokens
++      const contextTokens =
++        contextInputTokens != null || contextOutputTokens != null
++          ? (contextInputTokens || 0) + (contextOutputTokens || 0)
++          : undefined
++      const displayInputTokens =
++        command.name === 'context' && contextTokens != null
++          ? contextInputTokens || 0
++          : usage.inputTokens
++      const displayOutputTokens =
++        command.name === 'context' && contextTokens != null
++          ? contextOutputTokens || 0
++          : usage.outputTokens
++      const totalTokens = command.name === 'context' ? contextTokens : usageTotalTokens
++      const percent =
++        command.name === 'context'
++          ? contextTokens != null && contextWindow > 0
++            ? Math.round((contextTokens / contextWindow) * 1000) / 10
++            : null
++          : 0
+       emitCommand({
+         action: command.name,
+         terminal: !state.isWorking,
+         message: command.name === 'context'
+-          ? `Context: input ${usage.inputTokens}, output ${usage.outputTokens}, total ${totalTokens} / ${contextWindow} tokens (${percent}%).`
+-          : `Usage: input ${usage.inputTokens}, output ${usage.outputTokens}, total ${totalTokens} tokens.`,
+-        inputTokens: usage.inputTokens,
+-        outputTokens: usage.outputTokens,
++          ? contextTokens == null
++            ? `Context: unknown / ${contextWindow} tokens.`
++            : `Context: input ${displayInputTokens}, output ${displayOutputTokens}, total ${contextTokens} / ${contextWindow} tokens (${percent}%).`
++          : `Usage: input ${displayInputTokens}, output ${displayOutputTokens}, total ${totalTokens} tokens.`,
++        inputTokens: displayInputTokens,
++        outputTokens: displayOutputTokens,
+         totalTokens,
+         contextWindow,
+         contextPercent: percent,
++        ...(contextTokens != null ? { contextTokens } : {}),
+       })
+     } catch (err) {
+       emitCommand({
+diff --git a/packages/server/src/modules/studio/repositories/session-store.ts b/packages/server/src/modules/studio/repositories/session-store.ts
+index 02a3ba8..f529d2f 100644
+--- a/packages/server/src/modules/studio/repositories/session-store.ts
++++ b/packages/server/src/modules/studio/repositories/session-store.ts
+@@ -3,7 +3,7 @@
+  * Uses the same ensureTable/getDb pattern as usage-store.ts.
+  */
+ import { isSqliteAvailable, getDb } from '../infrastructure/database'
+-import { COMPRESSION_SNAPSHOT_TABLE, SESSIONS_TABLE, MESSAGES_TABLE } from '../infrastructure/database/schemas'
++import { COMPRESSION_SNAPSHOT_TABLE, CONTEXT_USAGE_TABLE, SESSIONS_TABLE, MESSAGES_TABLE } from '../infrastructure/database/schemas'
+ import { normalizeMessageContentForStorageRole } from './message-content'
+ import { copyCompressionSnapshot } from './compression-snapshot'
+ import { recordSkillUsageMessage } from './skill-usage-store'
+@@ -441,6 +441,7 @@ export function deleteSession(id: string): boolean {
+   db.exec('BEGIN')
+   try {
+     db.prepare(`DELETE FROM ${COMPRESSION_SNAPSHOT_TABLE} WHERE session_id = ?`).run(id)
++    db.prepare(`DELETE FROM ${CONTEXT_USAGE_TABLE} WHERE session_id = ?`).run(id)
+     db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
+     const result = db.prepare(`DELETE FROM ${SESSIONS_TABLE} WHERE id = ?`).run(id)
+     db.exec('COMMIT')
+@@ -458,6 +459,7 @@ export function clearSessionMessages(id: string): number {
+   try {
+     const result = db.prepare(`DELETE FROM ${MESSAGES_TABLE} WHERE session_id = ?`).run(id)
+     db.prepare(`DELETE FROM ${COMPRESSION_SNAPSHOT_TABLE} WHERE session_id = ?`).run(id)
++    db.prepare(`DELETE FROM ${CONTEXT_USAGE_TABLE} WHERE session_id = ?`).run(id)
+     db.prepare(
+       `UPDATE ${SESSIONS_TABLE}
+        SET history_revision = history_revision + 1,
+diff --git a/packages/server/src/modules/studio/repositories/usage-store.ts b/packages/server/src/modules/studio/repositories/usage-store.ts
+index c8a44fe..8b2244e 100644
+--- a/packages/server/src/modules/studio/repositories/usage-store.ts
++++ b/packages/server/src/modules/studio/repositories/usage-store.ts
+@@ -1,5 +1,5 @@
+ import { isSqliteAvailable, getDb, jsonSet, jsonGet, jsonGetAll, jsonDelete } from '../infrastructure/database'
+-import { USAGE_TABLE as TABLE } from '../infrastructure/database/schemas'
++import { CONTEXT_USAGE_TABLE, SESSIONS_TABLE, USAGE_TABLE as TABLE } from '../infrastructure/database/schemas'
+ import type {
+   LocalUsageStats,
+   UsageStatsAgentRow,
+@@ -23,6 +23,64 @@ export interface UsageRecord {
+   model: string
+   profile: string
+   created_at: number
++  usage_scope?: string
++}
++
++const RECORD_COLUMNS = 'session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, model, profile, created_at, usage_scope'
++
++function getContextBoundary(sessionId: string): { historyRevision: number; nativeSessionId: string } {
++  const session = isSqliteAvailable()
++    ? getDb()!.prepare(`SELECT history_revision, agent_native_session_id FROM ${SESSIONS_TABLE} WHERE id = ?`).get(sessionId)
++    : jsonGet(SESSIONS_TABLE, sessionId)
++  return {
++    historyRevision: Number(session?.history_revision || 0),
++    nativeSessionId: String(session?.agent_native_session_id || ''),
++  }
++}
++
++function matchesContextBoundary(
++  row: Record<string, any>,
++  boundary: ReturnType<typeof getContextBoundary>,
++): boolean {
++  return Number(row.context_history_revision || 0) === boundary.historyRevision
++    && String(row.context_native_session_id || '') === boundary.nativeSessionId
++}
++
++export function saveContextUsage(sessionId: string, contextTokens: number): void {
++  if (typeof contextTokens !== 'number' || !Number.isFinite(contextTokens) || contextTokens < 0) return
++  const tokens = Math.floor(contextTokens)
++  const now = Date.now()
++  const boundary = getContextBoundary(sessionId)
++  if (isSqliteAvailable()) {
++    getDb()!.prepare(`
++      INSERT INTO ${CONTEXT_USAGE_TABLE}
++        (session_id, context_tokens, updated_at, context_history_revision, context_native_session_id)
++      VALUES (?, ?, ?, ?, ?)
++      ON CONFLICT(session_id) DO UPDATE SET
++        context_tokens = excluded.context_tokens, updated_at = excluded.updated_at,
++        context_history_revision = excluded.context_history_revision,
++        context_native_session_id = excluded.context_native_session_id
++    `).run(sessionId, tokens, now, boundary.historyRevision, boundary.nativeSessionId)
++  } else {
++    jsonSet(CONTEXT_USAGE_TABLE, sessionId, {
++      context_tokens: tokens,
++      updated_at: now,
++      context_history_revision: boundary.historyRevision,
++      context_native_session_id: boundary.nativeSessionId,
++    })
++  }
++}
++
++export function getContextUsage(sessionId: string): { contextTokens: number; updatedAt: number } | undefined {
++  const row = isSqliteAvailable()
++    ? getDb()!.prepare(`
++        SELECT context_tokens, updated_at, context_history_revision, context_native_session_id
++        FROM ${CONTEXT_USAGE_TABLE} WHERE session_id = ?
++      `).get(sessionId)
++    : jsonGet(CONTEXT_USAGE_TABLE, sessionId)
++  if (!row || typeof row.context_tokens !== 'number' || !Number.isFinite(row.context_tokens) || row.context_tokens < 0) return undefined
++  if (!matchesContextBoundary(row, getContextBoundary(sessionId))) return undefined
++  return { contextTokens: row.context_tokens, updatedAt: Number(row.updated_at || 0) }
+ }
+ 
+ function hasUpdatedAtColumn(): boolean {
+@@ -43,6 +101,8 @@ export function updateUsage(
+     source?: string
+     agent?: string
+     usageScope?: 'model_call' | 'run'
++    contextHistoryRevision?: number
++    contextNativeSessionId?: string
+     purpose?: string
+     apiCalls?: number
+     inputTokens: number
+@@ -63,6 +123,11 @@ export function updateUsage(
+   const model = data.model || ''
+   const provider = data.provider || ''
+   const profile = data.profile || 'default'
++  const boundary = data.usageScope === 'model_call' ? getContextBoundary(sessionId) : undefined
++  if (boundary) {
++    boundary.historyRevision = data.contextHistoryRevision ?? boundary.historyRevision
++    boundary.nativeSessionId = data.contextNativeSessionId ?? boundary.nativeSessionId
++  }
+   if (isSqliteAvailable()) {
+     const db = getDb()!
+     const columns = [
+@@ -104,6 +169,11 @@ export function updateUsage(
+       data.isEstimated ? 1 : 0,
+       now,
+     ]
++    if (boundary) {
++      columns.push('context_history_revision', 'context_native_session_id')
++      values.push('?', '?')
++      params.push(boundary.historyRevision, boundary.nativeSessionId)
++    }
+     if (hasUpdatedAtColumn()) {
+       columns.push('updated_at')
+       values.push('?')
+@@ -130,6 +200,10 @@ export function updateUsage(
+       profile,
+       is_estimated: data.isEstimated ? 1 : 0,
+       created_at: now,
++      ...(boundary ? {
++        context_history_revision: boundary.historyRevision,
++        context_native_session_id: boundary.nativeSessionId,
++      } : {}),
+     })
+   }
+ }
+@@ -176,7 +250,7 @@ export function getRecordedUsageTotals(sessionId: string, source: string): {
+ export function getUsage(sessionId: string): UsageRecord | undefined {
+   if (isSqliteAvailable()) {
+     return getDb()!.prepare(
+-      `SELECT session_id, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, model, profile, created_at FROM ${TABLE} WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
++      `SELECT ${RECORD_COLUMNS} FROM ${TABLE} WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+     ).get(sessionId) as UsageRecord | undefined
+   }
+   const row = jsonGet(TABLE, sessionId)
+@@ -190,9 +264,34 @@ export function getUsage(sessionId: string): UsageRecord | undefined {
+     model: row.model ?? '',
+     profile: row.profile ?? 'default',
+     created_at: row.created_at ?? 0,
++    usage_scope: row.usage_scope ?? 'run',
+   }
+ }
+ 
++/**
++ * Newest per-call row for a session, i.e. the one describing the prompt the
++ * provider actually received on the last model call. Run-scope rows aggregate a
++ * whole run, so their token columns are sums over every call and cannot be read
++ * as a context measurement — sessions that only have those get no reading.
++ */
++export function getLatestModelCallUsage(sessionId: string): UsageRecord | undefined {
++  // Accounting survives history resets; context must belong to the current
++  // history revision and native session, not merely the last billed call.
++  const boundary = getContextBoundary(sessionId)
++  if (isSqliteAvailable()) {
++    return getDb()!.prepare(
++      `SELECT ${RECORD_COLUMNS} FROM ${TABLE}
++       WHERE session_id = ? AND usage_scope = 'model_call'
++         AND context_history_revision = ? AND context_native_session_id = ?
++       ORDER BY id DESC LIMIT 1`,
++    ).get(sessionId, boundary.historyRevision, boundary.nativeSessionId) as UsageRecord | undefined
++  }
++  const row = jsonGet(TABLE, sessionId)
++  return row?.usage_scope === 'model_call' && matchesContextBoundary(row, boundary)
++    ? getUsage(sessionId)
++    : undefined
++}
++
+ export function getUsageBatch(sessionIds: string[]): Record<string, UsageRecord> {
+   if (sessionIds.length === 0) return {}
+   if (isSqliteAvailable()) {
+@@ -241,8 +340,10 @@ export function getUsageBatch(sessionIds: string[]): Record<string, UsageRecord>
+ export function deleteUsage(sessionId: string): void {
+   if (isSqliteAvailable()) {
+     getDb()!.prepare(`DELETE FROM ${TABLE} WHERE session_id = ?`).run(sessionId)
++    getDb()!.prepare(`DELETE FROM ${CONTEXT_USAGE_TABLE} WHERE session_id = ?`).run(sessionId)
+   } else {
+     jsonDelete(TABLE, sessionId)
++    jsonDelete(CONTEXT_USAGE_TABLE, sessionId)
+   }
+ }
+ 
+diff --git a/packages/server/src/modules/studio/services/chat-run/load-state.ts b/packages/server/src/modules/studio/services/chat-run/load-state.ts
+index 26652de..a9bf8eb 100644
+--- a/packages/server/src/modules/studio/services/chat-run/load-state.ts
++++ b/packages/server/src/modules/studio/services/chat-run/load-state.ts
+@@ -5,7 +5,7 @@ import {
+ import { getRecordedUsageTotals, getUsage } from '../../repositories/usage-store'
+ import { logger } from '../../public/logging'
+ import { handleMessage } from './message-format'
+-import { estimateUsageTokensFromMessages } from './usage'
++import { getRecordedContextUsage, estimateUsageTokensFromMessages } from './usage'
+ import type { ChatRunSource, SessionState } from './types'
+ 
+ function restoreBackgroundDelegations(messages: any[]): SessionState['backgroundDelegations'] {
+@@ -79,8 +79,11 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
+     const hasPersistedUsage = !!latestUsage || totals.inputTokens > 0 || totals.outputTokens > 0
+     inputTokens = hasPersistedUsage ? totals.inputTokens : pageUsage.inputTokens
+     outputTokens = hasPersistedUsage ? totals.outputTokens : pageUsage.outputTokens
+-    if (latestUsage) {
+-      contextTokens = Number(latestUsage.input_tokens || 0) + Number(latestUsage.output_tokens || 0)
++    // Seed the context bar from the last model call, cached prefix included —
++    // otherwise a reopened session reads near-zero until the next turn lands.
++    const contextUsage = getRecordedContextUsage(sid)
++    if (contextUsage) {
++      contextTokens = contextUsage.inputTokens + contextUsage.outputTokens
+     }
+ 
+     logger.info('[chat-run-socket] loaded session %s from DB (%d messages)', sid, messages.length)
+diff --git a/packages/server/src/modules/studio/services/chat-run/usage.ts b/packages/server/src/modules/studio/services/chat-run/usage.ts
+index 6b5b866..bc3ef3d 100644
+--- a/packages/server/src/modules/studio/services/chat-run/usage.ts
++++ b/packages/server/src/modules/studio/services/chat-run/usage.ts
+@@ -7,11 +7,13 @@ import {
+   getSessionDetail,
+ } from '../../repositories/session-store'
+ import { deleteCompressionSnapshot, getCompressionSnapshot } from '../../repositories/compression-snapshot'
+-import { getRecordedUsageTotals, getUsage } from '../../repositories/usage-store'
++import { getContextUsage, getRecordedUsageTotals, getLatestModelCallUsage } from '../../repositories/usage-store'
++import { contextTokensFromModelCall } from '../usage/usage-recorder'
+ import { countTokens, SUMMARY_PREFIX } from '../context-compressor'
+ import { truncateToolResultForContext } from './tool-result-context'
+ import { logger } from '../../public/logging'
+ import { assembleCursorSnapshotHistory, readCursorSnapshotParts } from './context-history'
++import type { UsageRecord } from '../../repositories/usage-store'
+ import type { SessionState } from './types'
+ 
+ type UsageTokenMessage = {
+@@ -77,6 +79,39 @@ function storedReasoningTokenEstimate(details: unknown): number | undefined {
+     : undefined
+ }
+ 
++/** {@link contextTokensFromModelCall} over a persisted usage row. */
++export function contextTokensFromUsageRecord(
++  record: UsageRecord | undefined,
++): { inputTokens: number; outputTokens: number } | undefined {
++  if (!record) return undefined
++  return contextTokensFromModelCall({
++    inputTokens: record.input_tokens,
++    outputTokens: record.output_tokens,
++    cacheReadTokens: record.cache_read_tokens,
++    cacheWriteTokens: record.cache_write_tokens,
++  })
++}
++
++export function getRecordedContextUsage(sid: string): { inputTokens: number; outputTokens: number } | undefined {
++  let call: UsageRecord | undefined
++  let snapshot: ReturnType<typeof getContextUsage>
++  try {
++    call = getLatestModelCallUsage(sid)
++  } catch (err) {
++    logger.warn({ err, sessionId: sid }, '[chat-run-socket] failed to read per-call context')
++  }
++  try {
++    snapshot = getContextUsage(sid)
++  } catch (err) {
++    logger.warn({ err, sessionId: sid }, '[chat-run-socket] failed to read context snapshot')
++  }
++  if (snapshot && (!call || snapshot.updatedAt >= (call.created_at || 0))) {
++    // Native measurements supply a total, not a billable input/output split.
++    return { inputTokens: snapshot.contextTokens, outputTokens: 0 }
++  }
++  return contextTokensFromUsageRecord(call)
++}
++
+ export async function calcAndUpdateUsage(
+   sid: string,
+   state: SessionState,
+@@ -94,7 +129,9 @@ export async function calcAndUpdateUsage(
+   try {
+     if (options.nativeSource) {
+       const totals = getRecordedUsageTotals(sid, options.nativeSource)
+-      const latest = getUsage(sid)
++      // totals are lifetime cost counters; the last call is what still occupies
++      // the window, so context comes from that row rather than from the sums.
++      const contextUsage = getRecordedContextUsage(sid)
+       const usage = {
+         inputTokens: totals.inputTokens,
+         outputTokens: totals.outputTokens,
+@@ -108,10 +145,10 @@ export async function calcAndUpdateUsage(
+       })
+       return {
+         ...usage,
+-        ...(latest
++        ...(contextUsage
+           ? {
+-              contextInputTokens: Number(latest.input_tokens || 0),
+-              contextOutputTokens: Number(latest.output_tokens || 0),
++              contextInputTokens: contextUsage.inputTokens,
++              contextOutputTokens: contextUsage.outputTokens,
+             }
+           : {}),
+       }
+diff --git a/packages/server/src/modules/studio/services/usage/usage-recorder.ts b/packages/server/src/modules/studio/services/usage/usage-recorder.ts
+index 770a3c8..3770c2a 100644
+--- a/packages/server/src/modules/studio/services/usage/usage-recorder.ts
++++ b/packages/server/src/modules/studio/services/usage/usage-recorder.ts
+@@ -1,5 +1,5 @@
+ import { logger } from '../../public/logging'
+-import { updateUsage } from '../../repositories/usage-store'
++import { saveContextUsage, updateUsage } from '../../repositories/usage-store'
+ 
+ export interface NormalizedTokenUsage {
+   inputTokens: number
+@@ -18,6 +18,8 @@ export interface RecordSessionUsageInput {
+   model?: string | null
+   provider?: string | null
+   usageScope?: 'model_call' | 'run'
++  contextHistoryRevision?: number
++  contextNativeSessionId?: string
+   purpose?: string
+   apiCalls?: number
+   usage?: unknown
+@@ -50,6 +52,47 @@ function usagePayload(value: unknown): Record<string, any> {
+     || root
+ }
+ 
++function positiveToken(value: unknown): number {
++  const token = Number(value || 0)
++  return Number.isFinite(token) && token > 0 ? Math.floor(token) : 0
++}
++
++/**
++ * Context occupied by a single model call.
++ *
++ * Providers report the prompt they actually received in three buckets: the
++ * fresh input tokens plus the prefix served from (cache read) or written to
++ * (cache write) their prompt cache, and `normalizeTokenUsage` keeps them apart
++ * so cost accounting can price them differently. Reading input+output alone
++ * therefore reports only the uncached slice — on a warm coding-agent session
++ * that is 1-3% of the real prompt, which is why the context bar sat near zero
++ * and never warned before a turn overran the model's window.
++ *
++ * Reasoning tokens are deliberately left out: providers already count them
++ * inside output tokens, so adding them would double-count.
++ */
++export function contextTokensFromModelCall(usage: {
++  inputTokens?: unknown
++  outputTokens?: unknown
++  cacheReadTokens?: unknown
++  cacheWriteTokens?: unknown
++}): { inputTokens: number; outputTokens: number } {
++  return {
++    inputTokens: positiveToken(usage.inputTokens)
++      + positiveToken(usage.cacheReadTokens)
++      + positiveToken(usage.cacheWriteTokens),
++    outputTokens: positiveToken(usage.outputTokens),
++  }
++}
++
++export function recordSessionContextUsage(sessionId: string, contextTokens: number): void {
++  try {
++    saveContextUsage(sessionId, contextTokens)
++  } catch (err) {
++    logger.warn({ err, sessionId }, '[usage-recorder] failed to persist context measurement')
++  }
++}
++
+ export function normalizeTokenUsage(
+   value: unknown,
+   fallback: Partial<NormalizedTokenUsage> = {},
+@@ -115,6 +158,8 @@ export function recordSessionUsage(input: RecordSessionUsageInput): NormalizedTo
+       source: input.source,
+       agent: input.agent,
+       usageScope: input.usageScope,
++      contextHistoryRevision: input.contextHistoryRevision,
++      contextNativeSessionId: input.contextNativeSessionId,
+       purpose: input.purpose,
+       apiCalls: input.apiCalls,
+       inputTokens: usage.inputTokens,
+diff --git a/tests/client/chat-input-draft.test.ts b/tests/client/chat-input-draft.test.ts
+index 26507bd..8073a82 100644
+--- a/tests/client/chat-input-draft.test.ts
++++ b/tests/client/chat-input-draft.test.ts
+@@ -330,6 +330,48 @@ describe('ChatInput draft persistence', () => {
+     expect(wrapper.find('.context-bar').exists()).toBe(true)
+   })
+ 
++  it('does not derive coding-agent context usage from accumulated billing totals', async () => {
++    const wrapper = mountForSession('session-codex-unknown', {
++      source: 'coding_agent',
++      agent: 'codex',
++      codingAgentId: 'codex',
++      inputTokens: 1200,
++      outputTokens: 800,
++    })
++    await nextTick()
++
++    expect(wrapper.get('.context-info').text()).toContain('chat.contextUnknown')
++    expect(wrapper.get('.context-info').text()).not.toContain('2.0k')
++    expect(wrapper.find('.context-bar').exists()).toBe(false)
++  })
++
++  it('treats zero coding-agent context usage as a known value', async () => {
++    const wrapper = mountForSession('session-codex-empty-context', {
++      source: 'coding_agent',
++      agent: 'codex',
++      codingAgentId: 'codex',
++      inputTokens: 1200,
++      outputTokens: 800,
++      contextTokens: 0,
++    })
++    await nextTick()
++
++    expect(wrapper.get('.context-info').text()).toContain('0 /')
++    expect(wrapper.find('.context-bar').exists()).toBe(true)
++  })
++
++  it('keeps the accumulated-token fallback for regular Hermes sessions', async () => {
++    const wrapper = mountForSession('session-hermes-fallback', {
++      source: 'cli',
++      inputTokens: 1200,
++      outputTokens: 800,
++    })
++    await nextTick()
++
++    expect(wrapper.get('.context-info').text()).toContain('2.0k')
++    expect(wrapper.find('.context-bar').exists()).toBe(true)
++  })
++
+   it('shows reasoning effort selector for coding-agent sessions', async () => {
+     const wrapper = mountForSession('session-codex', {
+       source: 'coding_agent',
+diff --git a/tests/e2e/context-usage.spec.ts b/tests/e2e/context-usage.spec.ts
+new file mode 100644
+index 0000000..a7ebb63
+--- /dev/null
++++ b/tests/e2e/context-usage.spec.ts
+@@ -0,0 +1,80 @@
++import { expect, test } from '@playwright/test'
++import { authenticate, mockChatSocket, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
++
++for (const width of [1280, 390]) {
++  test(`cleared native context remains unknown instead of using lifetime billing at ${width}px`, async ({ page }) => {
++    await page.setViewportSize({ width, height: 900 })
++    await authenticate(page, TEST_ACCESS_KEY, 'research')
++    const sid = 'context-cleared-session'
++    await page.addInitScript(({ sid }) => {
++      ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
++        [sid]: {
++          session_id: sid, messages: [], isWorking: false, events: [],
++          inputTokens: 9_000_000, outputTokens: 40_000,
++        },
++      }
++    }, { sid })
++    await mockHermesApi(page, {
++      sessions: [{
++        id: sid, profile: 'research', source: 'coding_agent', agent: 'codex',
++        agent_mode: 'global', model: 'test-model', provider: 'test-provider',
++        title: 'Cleared context', started_at: 1, last_active: 2, message_count: 0,
++        input_tokens: 9_000_000, output_tokens: 40_000,
++      }],
++    })
++    await mockChatSocket(page)
++    await page.goto(`/#/hermes/session/${sid}`)
++    const context = page.locator('.context-info')
++    await expect(context).toContainText('unknown', { timeout: 20_000 })
++    await expect(context).not.toContainText('9.0M')
++    await page.reload()
++    await expect(context).toContainText('unknown', { timeout: 20_000 })
++  })
++
++  test(`coding-agent context uses the restored snapshot at ${width}px`, async ({ page }, testInfo) => {
++    await page.setViewportSize({ width, height: 900 })
++    await authenticate(page, TEST_ACCESS_KEY, 'research')
++    const sid = 'context-snapshot-session'
++    await page.addInitScript(({ sid }) => {
++      ;(window as any).__PW_CHAT_SOCKET_RESUMES__ = {
++        [sid]: {
++          session_id: sid,
++          messages: [{ id: 1, role: 'user', content: 'Context snapshot check', timestamp: 1 }],
++          isWorking: false, events: [],
++          inputTokens: 9_000_000, outputTokens: 40_000, contextTokens: 66_624,
++        },
++      }
++    }, { sid })
++    await mockHermesApi(page, {
++      sessions: [{
++        id: sid, profile: 'research', source: 'coding_agent', agent: 'codex', agent_mode: 'global',
++        model: 'test-model', provider: 'test-provider', title: 'Context snapshot',
++        started_at: 1, last_active: 2, message_count: 1,
++        input_tokens: 9_000_000, output_tokens: 40_000,
++      }],
++    })
++    await mockChatSocket(page)
++    await page.goto(`/#/hermes/session/${sid}`)
++    await expect(page.getByText('Context snapshot check', { exact: true })).toBeVisible({ timeout: 20_000 })
++    const context = page.locator('.context-info')
++    await expect(context).toContainText('66.6k')
++    await page.reload()
++    await expect(page.getByText('Context snapshot check', { exact: true })).toBeVisible({ timeout: 20_000 })
++    await expect(context).toContainText('66.6k')
++
++    await page.getByPlaceholder('Type a message... (Enter to send, Shift+Enter for new line)').fill('Check compacted context')
++    await page.getByRole('button', { name: 'Send', exact: true }).click()
++    await page.waitForFunction(() => (window as any).__PW_CHAT_SOCKET__.emitted.some((event: any) => event.event === 'run'))
++    await page.evaluate(sid => {
++      const socket = (window as any).__PW_CHAT_SOCKET__.latest
++      socket.__trigger('run.started', { event: 'run.started', session_id: sid, run_id: 'context-run' })
++      socket.__trigger('usage.updated', {
++        event: 'usage.updated', session_id: sid,
++        inputTokens: 9_000_000, outputTokens: 40_000, contextTokens: 20_000,
++      })
++    }, sid)
++    await expect(context).toContainText('20.0k')
++    await expect(context).not.toContainText('9.0M')
++    await page.screenshot({ path: testInfo.outputPath(`context-${width}.png`), fullPage: true })
++  })
++}
+diff --git a/tests/server/agent-runner-utils.test.ts b/tests/server/agent-runner-utils.test.ts
+index fd7c74b..2723d63 100644
+--- a/tests/server/agent-runner-utils.test.ts
++++ b/tests/server/agent-runner-utils.test.ts
+@@ -21,8 +21,8 @@ import {
+ } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
+ import { applyResponseStreamEvent } from '../../packages/server/src/modules/studio/services/chat-run/response-stream'
+ import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
+-import { addMessage, getSession, getSessionDetail, listSessions } from '../../packages/server/src/modules/studio/repositories/session-store'
+-import { getRecordedUsageTotals, getUsage } from '../../packages/server/src/modules/studio/repositories/usage-store'
++import { addMessage, clearSessionMessages, getSession, getSessionDetail, listSessions, updateSession } from '../../packages/server/src/modules/studio/repositories/session-store'
++import { getContextUsage, getLatestModelCallUsage, getRecordedUsageTotals, getUsage } from '../../packages/server/src/modules/studio/repositories/usage-store'
+ import { getChatRunServer, setChatRunServer } from '../../packages/server/src/modules/studio/services/chat-run/server-registry'
+ 
+ describe('agent runner endpoint resolver', () => {
+@@ -57,6 +57,105 @@ describe('agent runner endpoint resolver', () => {
+ })
+ 
+ describe('coding agent completion errors', () => {
++  it.each(['history', 'native'])('does not publish delayed context after the %s boundary changes', boundary => {
++    initAllHermesTables()
++    const manager = new CodingAgentRunManager()
++    const sid = `context-boundary-${Date.now()}-${Math.random()}`
++    const agentSessionId = `agent-${sid}`
++    const emit = vi.fn()
++    ;(manager as any).emitToChat = emit
++    try {
++      manager.start({
++        agentSessionId, agentId: 'codex', mode: 'scoped',
++        agentNativeSessionId: 'native-before',
++        profile: 'default', provider: 'test-provider', model: 'test-model',
++        sessionId: sid, command: 'codex', args: [], shellCommand: 'codex',
++        workspaceDir: process.cwd(),
++      })
++      const run = (manager as any).runs.get(agentSessionId)
++      emit.mockClear()
++      if (boundary === 'history') clearSessionMessages(sid)
++      else updateSession(sid, { agent_native_session_id: 'native-after' })
++
++      ;(manager as any).publishContextTokens(run, 66_624)
++      manager.handleProxyUsageEvent(agentSessionId, {
++        type: 'response.completed',
++        data: { response: { id: `response-${sid}`, usage: { input_tokens: 100, output_tokens: 20 } } },
++      } as any)
++
++      expect(getContextUsage(sid)).toBeUndefined()
++      expect(getLatestModelCallUsage(sid)).toBeUndefined()
++      expect(emit).not.toHaveBeenCalledWith(sid, 'usage.updated', expect.anything())
++      expect(getRecordedUsageTotals(sid, 'coding_agent')).toEqual(expect.objectContaining({
++        inputTokens: 100, outputTokens: 20,
++      }))
++    } finally {
++      manager.shutdown()
++    }
++  })
++
++  it.each(['history-reuse', 'native-switch', 'cleanup'])(
++    'retains request-owned billing without reviving context after %s',
++    boundary => {
++      initAllHermesTables()
++      const manager = new CodingAgentRunManager()
++      const sid = `request-owned-usage-${Date.now()}-${Math.random()}`
++      const agentSessionId = `agent-${sid}`
++      try {
++        manager.start({
++          agentSessionId, agentId: 'codex', mode: 'scoped', agentNativeSessionId: 'native-A',
++          profile: 'default', provider: 'test-provider', model: 'test-model', sessionId: sid,
++          command: 'codex', args: [], shellCommand: 'codex', workspaceDir: process.cwd(),
++        })
++        const run = (manager as any).runs.get(agentSessionId)
++        const observer = manager.createProxyUsageObserver(agentSessionId)
++        if (boundary === 'history-reuse') {
++          clearSessionMessages(sid)
++          vi.spyOn(manager as any, 'startCodexExecTurn').mockImplementation(() => {})
++          vi.spyOn(manager as any, 'startWorkspaceRunDiff').mockImplementation(() => {})
++          manager.send(sid, 'fresh request')
++        } else if (boundary === 'native-switch') {
++          ;(manager as any).recordCodexNativeSessionId(run, 'native-B')
++        } else {
++          manager.stop(sid, { reportClosed: false })
++          clearSessionMessages(sid)
++        }
++        const completed: any = {
++          type: 'response.completed',
++          data: { response: { id: `old-request-${sid}`, usage: { input_tokens: 100, output_tokens: 20 } } },
++        }
++        observer(completed)
++        observer(completed)
++        expect(getRecordedUsageTotals(sid, 'coding_agent')).toEqual(expect.objectContaining({
++          inputTokens: 100, outputTokens: 20, apiCalls: 1,
++        }))
++        expect(getContextUsage(sid)).toBeUndefined()
++        expect(getLatestModelCallUsage(sid)).toBeUndefined()
++      } finally {
++        manager.shutdown()
++      }
++    },
++  )
++
++  it.each([{ exited: true }, { stoppedByUser: true }])('ignores late context events from a retired run %j', flags => {
++    initAllHermesTables()
++    const manager = new CodingAgentRunManager()
++    const sid = `late-context-${Date.now()}-${Math.random()}`
++    const emit = vi.fn()
++    ;(manager as any).emitToChat = emit
++    try {
++      ;(manager as any).publishContextTokens({
++        ...flags,
++        launch: { sessionId: sid },
++        state: { messages: [], events: [], queue: [], isWorking: false },
++      }, 66_624)
++      expect(getContextUsage(sid)).toBeUndefined()
++      expect(emit).not.toHaveBeenCalled()
++    } finally {
++      manager.shutdown()
++    }
++  })
++
+   it('publishes realtime and terminal events after the run manager directory move', () => {
+     const previous = getChatRunServer()
+     const emitExternalEvent = vi.fn()
+@@ -1124,6 +1223,42 @@ describe('coding agent run state', () => {
+     manager.shutdown()
+   })
+ 
++  it('ignores stale Codex thread usage without rebinding the active native session', () => {
++    initAllHermesTables()
++    const manager = new CodingAgentRunManager()
++    const sid = `codex-stale-thread-${Date.now()}-${Math.random()}`
++    const agentSessionId = `agent-${sid}`
++    try {
++      manager.start({
++        agentSessionId, agentId: 'codex', mode: 'global', agentNativeSessionId: 'native-B',
++        profile: 'default', provider: 'test-provider', model: 'test-model', sessionId: sid,
++        command: 'codex', args: [], shellCommand: 'codex', workspaceDir: process.cwd(),
++      })
++      const run = (manager as any).runs.get(agentSessionId)
++      const notify = (threadId: string, totalTokens: number) => {
++        ;(manager as any).handleCodexExecLine(run, JSON.stringify({
++          method: 'thread/tokenUsage/updated',
++          params: { threadId, tokenUsage: { last: { totalTokens } } },
++        }))
++      }
++      notify('native-A', 66_624)
++      expect(run.launch.agentNativeSessionId).toBe('native-B')
++      expect(getSession(sid)?.agent_native_session_id).toBe('native-B')
++      expect(getContextUsage(sid)).toBeUndefined()
++
++      notify('native-B', 20_000)
++      expect(getContextUsage(sid)?.contextTokens).toBe(20_000)
++      ;(manager as any).handleCodexExecLine(run, JSON.stringify({
++        method: 'thread/started', params: { threadId: 'native-C' },
++      }))
++      notify('native-C', 30_000)
++      expect(getSession(sid)?.agent_native_session_id).toBe('native-C')
++      expect(getContextUsage(sid)?.contextTokens).toBe(30_000)
++    } finally {
++      manager.shutdown()
++    }
++  })
++
+   it('maps Codex exec JSONL assistant deltas into chat messages', async () => {
+     initAllHermesTables()
+     const manager = new CodingAgentRunManager()
+@@ -1167,6 +1302,14 @@ describe('coding agent run state', () => {
+       method: 'item/agentMessage/delta',
+       params: { delta: 'I am GPT-5-Codex' },
+     }))
++    // `last` is the prompt of the most recent model call — the only reading
++    // that describes the window. turn.completed below carries the turn
++    // aggregate instead, which sums every call and cannot stand in for it.
++    ;(manager as any).handleCodexExecLine(run, JSON.stringify({
++      method: 'thread/tokenUsage/updated',
++      params: { tokenUsage: { last: { totalTokens: 66_624 }, total: { totalTokens: 131_072 } } },
++    }))
++    expect(getContextUsage(chatSessionId)?.contextTokens).toBe(66_624)
+     ;(manager as any).handleCodexExecLine(run, JSON.stringify({
+       type: 'turn.completed',
+       usage: { input_tokens: 12, output_tokens: 7, total_tokens: 19 },
+@@ -1190,6 +1333,9 @@ describe('coding agent run state', () => {
+     expect(emitted.find(event => event.event === 'run.completed')?.payload).not.toHaveProperty('usage')
+     const eventNames = emitted.map(event => event.event)
+     expect(eventNames.lastIndexOf('usage.updated')).toBeLessThan(eventNames.indexOf('run.completed'))
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++    const reloaded = await loadSessionStateFromDb(chatSessionId, new Map())
++    expect(reloaded.contextTokens).toBe(66_624)
+     manager.shutdown()
+   })
+ 
+@@ -2331,6 +2477,34 @@ describe('response stream tool detail events', () => {
+ })
+ 
+ describe('OpenCode JSON stream mapping', () => {
++  it('keeps late global step accounting outside the cleared history boundary', () => {
++    initAllHermesTables()
++    const manager = new CodingAgentRunManager()
++    const sid = `opencode-context-boundary-${Date.now()}-${Math.random()}`
++    const agentSessionId = `agent-${sid}`
++    try {
++      manager.start({
++        agentSessionId, agentId: 'opencode', mode: 'global', agentNativeSessionId: 'native-before',
++        profile: 'default', provider: 'test-provider', model: 'test-model', sessionId: sid,
++        command: 'opencode', args: [], shellCommand: 'opencode', workspaceDir: process.cwd(),
++      })
++      const run = (manager as any).runs.get(agentSessionId)
++      clearSessionMessages(sid)
++      ;(manager as any).handleOpenCodeLine(run, JSON.stringify({
++        type: 'step_finish',
++        sessionID: 'native-before',
++        part: { type: 'step-finish', id: `step-${sid}`, tokens: { input: 60_000, output: 120 } },
++      }))
++      expect(getRecordedUsageTotals(sid, 'coding_agent')).toEqual(expect.objectContaining({
++        inputTokens: 60_000, outputTokens: 120,
++      }))
++      expect(getLatestModelCallUsage(sid)).toBeUndefined()
++      expect(getContextUsage(sid)).toBeUndefined()
++    } finally {
++      manager.shutdown()
++    }
++  })
++
+   it('ignores scoped proxy lifecycle events and accepts native stdout once', () => {
+     const manager = new CodingAgentRunManager()
+     const emitted: Array<{ event: string; payload: any }> = []
+diff --git a/tests/server/coding-agent-session-command.test.ts b/tests/server/coding-agent-session-command.test.ts
+index 499eb9f..0618dc6 100644
+--- a/tests/server/coding-agent-session-command.test.ts
++++ b/tests/server/coding-agent-session-command.test.ts
+@@ -69,7 +69,12 @@ describe('coding agent session commands', () => {
+     vi.resetAllMocks()
+     addMessageMock.mockReturnValue(1)
+     getOrCreateSessionMock.mockReturnValue({ messages: [], isWorking: false })
+-    calcAndUpdateUsageMock.mockResolvedValue({ inputTokens: 10, outputTokens: 20 })
++    calcAndUpdateUsageMock.mockResolvedValue({
++      inputTokens: 10,
++      outputTokens: 20,
++      contextInputTokens: 10,
++      contextOutputTokens: 20,
++    })
+     getModelContextLengthMock.mockReturnValue(256_000)
+   })
+ 
+@@ -94,9 +99,55 @@ describe('coding agent session commands', () => {
+     }, { name: 'context', rawName: 'context', args: '' }, 'default', new Map())
+ 
+     const command = emitted.find(item => item.event === 'session.command')?.payload
+-    expect(command.action).toBe('context')
+-    expect(command.message).toContain('total 30 / 256000 tokens')
+-    expect(command.contextPercent).toBe(0)
++  expect(command.action).toBe('context')
++  expect(command.message).toContain('total 30 / 256000 tokens')
++  expect(command.contextPercent).toBe(0)
++  })
++
++  it('uses the latest request context for /context but accumulated totals for /usage', async () => {
++    calcAndUpdateUsageMock.mockResolvedValue({
++      inputTokens: 1_000,
++      outputTokens: 200,
++      contextInputTokens: 40,
++      contextOutputTokens: 10,
++    })
++    const { handleCodingAgentSessionCommand } = await import('../../packages/server/src/modules/coding-agents/services/session-command')
++
++    const contextSocket = makeSocket()
++    await handleCodingAgentSessionCommand(
++      contextSocket.nsp,
++      contextSocket.socket as any,
++      { session_id: 'session-1', model: 'test-model', provider: 'openrouter' },
++      { name: 'context', rawName: 'context', args: '' },
++      'default',
++      new Map(),
++    )
++    const context = contextSocket.emitted.find(item => item.event === 'session.command')?.payload
++    expect(context).toMatchObject({
++      action: 'context',
++      inputTokens: 40,
++      outputTokens: 10,
++      totalTokens: 50,
++    })
++    expect(context.message).toContain('input 40, output 10, total 50')
++    expect(context.message).not.toContain('1000')
++
++    const usageSocket = makeSocket()
++    await handleCodingAgentSessionCommand(
++      usageSocket.nsp,
++      usageSocket.socket as any,
++      { session_id: 'session-1', model: 'test-model', provider: 'openrouter' },
++      { name: 'usage', rawName: 'usage', args: '' },
++      'default',
++      new Map(),
++    )
++    const usage = usageSocket.emitted.find(item => item.event === 'session.command')?.payload
++    expect(usage).toMatchObject({
++      action: 'usage',
++      inputTokens: 1_000,
++      outputTokens: 200,
++      totalTokens: 1_200,
++    })
+   })
+ 
+   it('uses native Pi RPC stats for context and usage', async () => {
+diff --git a/tests/server/context-usage-store.test.ts b/tests/server/context-usage-store.test.ts
+new file mode 100644
+index 0000000..cf2bd93
+--- /dev/null
++++ b/tests/server/context-usage-store.test.ts
+@@ -0,0 +1,245 @@
++import { DatabaseSync } from 'node:sqlite'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++
++let db: DatabaseSync
++const jsonRows = new Map<string, Record<string, unknown>>()
++let sqliteAvailable = true
++
++vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
++  isSqliteAvailable: () => sqliteAvailable,
++  getDb: () => db,
++  jsonSet: (table: string, key: string, value: Record<string, unknown>) => jsonRows.set(`${table}:${key}`, value),
++  jsonGet: (table: string, key: string) => jsonRows.get(`${table}:${key}`),
++  jsonGetAll: () => ({}),
++  jsonDelete: (table: string, key: string) => jsonRows.delete(`${table}:${key}`),
++}))
++vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
++  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
++}))
++
++import { initAllHermesTables } from '../../packages/server/src/modules/studio/infrastructure/database/schemas'
++import * as usageStore from '../../packages/server/src/modules/studio/repositories/usage-store'
++import { clearSessionMessages, deleteSession, updateSession } from '../../packages/server/src/modules/studio/repositories/session-store'
++
++describe('non-billable context usage snapshots', () => {
++  beforeEach(() => {
++    db = new DatabaseSync(':memory:')
++    sqliteAvailable = true
++    jsonRows.clear()
++    initAllHermesTables()
++  })
++
++  afterEach(() => {
++    vi.restoreAllMocks()
++    db.close()
++  })
++
++  it('persists the newest measurement without creating or changing billable rows', () => {
++    usageStore.updateUsage('context-1', {
++      runId: 'run-1', source: 'coding_agent', agent: 'codex',
++      inputTokens: 120, outputTokens: 70, apiCalls: 1,
++    })
++    const before = usageStore.getRecordedUsageTotals('context-1', 'coding_agent')
++    vi.spyOn(Date, 'now').mockReturnValueOnce(100).mockReturnValueOnce(200)
++
++    usageStore.saveContextUsage('context-1', 66_624)
++    usageStore.saveContextUsage('context-1', 12_345.9)
++
++    expect(usageStore.getContextUsage('context-1')).toEqual({ contextTokens: 12_345, updatedAt: 200 })
++    expect(usageStore.getContextUsage('other-session')).toBeUndefined()
++    expect(usageStore.getRecordedUsageTotals('context-1', 'coding_agent')).toEqual(before)
++    expect(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get()).toEqual({ count: 1 })
++    expect(db.prepare('SELECT COUNT(*) AS count FROM session_context_usage').get()).toEqual({ count: 1 })
++  })
++
++  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, undefined, null, '123'])(
++    'does not replace a valid measurement with invalid value %s',
++    value => {
++      usageStore.saveContextUsage('context-1', 100)
++      usageStore.saveContextUsage('context-1', value as number)
++      expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(100)
++    },
++  )
++
++  it('allows an explicit zero and removes snapshots together with usage', () => {
++    usageStore.saveContextUsage('context-1', 100)
++    usageStore.saveContextUsage('context-1', 0)
++    expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(0)
++    usageStore.deleteUsage('context-1')
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++  })
++
++  it('keeps JSON fallback snapshots separate from its billable record', () => {
++    sqliteAvailable = false
++    usageStore.updateUsage('context-1', { inputTokens: 120, outputTokens: 70 })
++    const before = usageStore.getUsage('context-1')
++    usageStore.saveContextUsage('context-1', 66_624)
++    expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(66_624)
++    expect(usageStore.getUsage('context-1')).toEqual(before)
++    usageStore.deleteUsage('context-1')
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++  })
++
++  it.each(['clear', 'delete'])('removes obsolete context when sessions %s their history', operation => {
++    db.prepare('INSERT INTO sessions (id, started_at, last_active) VALUES (?, 0, 0)').run('context-1')
++    usageStore.saveContextUsage('context-1', 66_624)
++
++    if (operation === 'clear') clearSessionMessages('context-1')
++    else deleteSession('context-1')
++
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++  })
++
++  it('does not revive an old model call after clearing history, even within the same millisecond', () => {
++    vi.spyOn(Date, 'now').mockReturnValue(1_000)
++    db.prepare('INSERT INTO sessions (id, started_at, last_active) VALUES (?, 0, 0)').run('context-1')
++    usageStore.updateUsage('context-1', {
++      source: 'coding_agent', agent: 'claude_code', usageScope: 'model_call',
++      inputTokens: 100, outputTokens: 20, cacheReadTokens: 60_000,
++    })
++    usageStore.saveContextUsage('context-1', 60_120)
++    const ledger = db.prepare('SELECT * FROM session_usage').all()
++    const totals = usageStore.getRecordedUsageTotals('context-1', 'coding_agent')
++
++    clearSessionMessages('context-1')
++
++    expect(usageStore.getLatestModelCallUsage('context-1')).toBeUndefined()
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++    expect(db.prepare('SELECT * FROM session_usage').all()).toEqual(ledger)
++    expect(usageStore.getRecordedUsageTotals('context-1', 'coding_agent')).toEqual(totals)
++
++    usageStore.updateUsage('context-1', {
++      source: 'coding_agent', agent: 'claude_code', usageScope: 'model_call',
++      inputTokens: 300, outputTokens: 40,
++    })
++    expect(usageStore.getLatestModelCallUsage('context-1')).toEqual(expect.objectContaining({
++      input_tokens: 300, output_tokens: 40,
++    }))
++    expect(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get()).toEqual({ count: 2 })
++  })
++
++  it('invalidates both measurements when the native session changes, without losing billing', () => {
++    db.prepare(`
++      INSERT INTO sessions (id, started_at, last_active, agent_native_session_id) VALUES (?, 0, 0, ?)
++    `).run('context-1', 'native-before')
++    usageStore.updateUsage('context-1', {
++      source: 'coding_agent', agent: 'claude_code', usageScope: 'model_call',
++      inputTokens: 100, outputTokens: 20,
++    })
++    usageStore.saveContextUsage('context-1', 60_120)
++    const totals = usageStore.getRecordedUsageTotals('context-1', 'coding_agent')
++
++    updateSession('context-1', { title: 'Renamed only' })
++    expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(60_120)
++    expect(usageStore.getLatestModelCallUsage('context-1')).toBeDefined()
++
++    updateSession('context-1', { agent_native_session_id: 'native-after' })
++
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++    expect(usageStore.getLatestModelCallUsage('context-1')).toBeUndefined()
++    expect(usageStore.getRecordedUsageTotals('context-1', 'coding_agent')).toEqual(totals)
++
++    usageStore.saveContextUsage('context-1', 2_000)
++    expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(2_000)
++  })
++
++  it('invalidates a retained snapshot when history revision changes', () => {
++    db.prepare('INSERT INTO sessions (id, started_at, last_active) VALUES (?, 0, 0)').run('context-1')
++    usageStore.saveContextUsage('context-1', 60_120)
++    updateSession('context-1', { history_revision: 1 })
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++    usageStore.saveContextUsage('context-1', 2_000)
++    expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(2_000)
++  })
++
++  it('keeps delayed billing in its original history revision instead of reviving cleared context', () => {
++    db.prepare('INSERT INTO sessions (id, started_at, last_active) VALUES (?, 0, 0)').run('context-1')
++    clearSessionMessages('context-1')
++    usageStore.updateUsage('context-1', {
++      source: 'coding_agent', usageScope: 'model_call',
++      inputTokens: 100, outputTokens: 20,
++      contextHistoryRevision: 0, contextNativeSessionId: '',
++    })
++    expect(usageStore.getLatestModelCallUsage('context-1')).toBeUndefined()
++    expect(usageStore.getRecordedUsageTotals('context-1', 'coding_agent')).toEqual(expect.objectContaining({
++      inputTokens: 100, outputTokens: 20,
++    }))
++  })
++
++  it('reopens cleared history with unknown context and intact lifetime billing, then accepts a fresh call', async () => {
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
++    db.prepare(`
++      INSERT INTO sessions (id, started_at, last_active, source, agent)
++      VALUES (?, 0, 0, 'coding_agent', 'claude_code')
++    `).run('context-1')
++    usageStore.updateUsage('context-1', {
++      source: 'coding_agent', usageScope: 'model_call',
++      inputTokens: 100, outputTokens: 20, cacheReadTokens: 60_000,
++    })
++    usageStore.saveContextUsage('context-1', 66_624)
++    expect((await loadSessionStateFromDb('context-1', new Map())).contextTokens).toBe(66_624)
++
++    clearSessionMessages('context-1')
++    const reopened = await loadSessionStateFromDb('context-1', new Map())
++    expect(reopened.contextTokens).toBeUndefined()
++    expect(reopened.inputTokens).toBe(100)
++    expect(reopened.outputTokens).toBe(20)
++    expect(await calcAndUpdateUsage('context-1', reopened, vi.fn(), { nativeSource: 'coding_agent' }))
++      .toEqual({ inputTokens: 100, outputTokens: 20 })
++
++    usageStore.updateUsage('context-1', {
++      source: 'coding_agent', usageScope: 'model_call', inputTokens: 2_500, outputTokens: 100,
++    })
++    expect((await loadSessionStateFromDb('context-1', new Map())).contextTokens).toBe(2_600)
++  })
++
++  it('adds boundary columns to old databases without rewriting billed tokens', () => {
++    db.prepare('INSERT INTO sessions (id, started_at, last_active, history_revision) VALUES (?, 0, 0, 1)')
++      .run('context-1')
++    for (const table of ['session_usage', 'session_context_usage']) {
++      db.exec(`ALTER TABLE ${table} DROP COLUMN context_history_revision`)
++      db.exec(`ALTER TABLE ${table} DROP COLUMN context_native_session_id`)
++    }
++    db.prepare(`
++      INSERT INTO session_usage (session_id, usage_scope, input_tokens, output_tokens)
++      VALUES (?, 'model_call', 123, 45)
++    `).run('context-1')
++    db.prepare('INSERT INTO session_context_usage (session_id, context_tokens, updated_at) VALUES (?, 60000, 1)')
++      .run('context-1')
++
++    initAllHermesTables()
++
++    expect(usageStore.getUsage('context-1')).toEqual(expect.objectContaining({
++      input_tokens: 123, output_tokens: 45,
++    }))
++    expect(usageStore.getLatestModelCallUsage('context-1')).toBeUndefined()
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++    expect(db.prepare('SELECT COUNT(*) AS count FROM session_usage').get()).toEqual({ count: 1 })
++  })
++
++  it.each(['history_revision', 'agent_native_session_id'])('applies the %s boundary in JSON fallback', field => {
++    sqliteAvailable = false
++    jsonRows.set('sessions:context-1', { history_revision: 0, agent_native_session_id: 'native-before' })
++    usageStore.updateUsage('context-1', {
++      usageScope: 'model_call', inputTokens: 100, outputTokens: 20,
++    })
++    usageStore.saveContextUsage('context-1', 60_120)
++    const ledger = usageStore.getUsage('context-1')
++    jsonRows.set('sessions:context-1', {
++      history_revision: field === 'history_revision' ? 1 : 0,
++      agent_native_session_id: field === 'agent_native_session_id' ? 'native-after' : 'native-before',
++    })
++
++    expect(usageStore.getContextUsage('context-1')).toBeUndefined()
++    expect(usageStore.getLatestModelCallUsage('context-1')).toBeUndefined()
++    expect(usageStore.getUsage('context-1')).toEqual(ledger)
++
++    usageStore.updateUsage('context-1', {
++      usageScope: 'model_call', inputTokens: 300, outputTokens: 40,
++    })
++    usageStore.saveContextUsage('context-1', 340)
++    expect(usageStore.getLatestModelCallUsage('context-1')?.input_tokens).toBe(300)
++    expect(usageStore.getContextUsage('context-1')?.contextTokens).toBe(340)
++  })
++})
+diff --git a/tests/server/proxy-request-usage.test.ts b/tests/server/proxy-request-usage.test.ts
+new file mode 100644
+index 0000000..4183db1
+--- /dev/null
++++ b/tests/server/proxy-request-usage.test.ts
+@@ -0,0 +1,56 @@
++import { afterEach, expect, it, vi } from 'vitest'
++import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
++import { codexProxyResponses, registerCodexProxyTarget } from '../../packages/server/src/modules/coding-agents/services/codex/proxy'
++import { claudeProxyMessages, registerClaudeCodeProxyTarget } from '../../packages/server/src/modules/coding-agents/services/claude-code/proxy'
++
++afterEach(() => {
++  vi.restoreAllMocks()
++  vi.unstubAllGlobals()
++})
++
++it.each(['codex', 'claude'])('captures separate %s request usage before awaiting the upstream', async kind => {
++  const observers = [vi.fn(), vi.fn()]
++  const capture = vi.spyOn(codingAgentRunManager, 'createProxyUsageObserver')
++    .mockReturnValueOnce(observers[0])
++    .mockReturnValueOnce(observers[1])
++  vi.spyOn(codingAgentRunManager, 'handleResponseEvent').mockImplementation(() => {})
++  let calls = 0
++  vi.stubGlobal('fetch', vi.fn(async () => {
++    calls++
++    expect(capture).toHaveBeenCalledTimes(calls)
++    const response = {
++      id: `response-${calls}`, object: 'response', status: 'completed',
++      model: 'test-model', output: [], usage: { input_tokens: 100, output_tokens: 20 },
++    }
++    return new Response(`event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response })}\n\n`, {
++      headers: { 'Content-Type': 'text/event-stream' },
++    })
++  }))
++  const input = {
++    profile: 'default', provider: 'test-provider', model: 'test-model',
++    baseUrl: 'https://example.invalid/v1', apiKey: 'synthetic-test-key',
++    apiMode: 'codex_responses' as const, agentSessionId: `request-test-${kind}`,
++  }
++  const target = kind === 'codex' ? registerCodexProxyTarget(input) : registerClaudeCodeProxyTarget(input)
++  const context = (): any => ({
++    params: { key: target.routeKey },
++    request: { body: { stream: true, model: 'test-model', input: 'hi', messages: [{ role: 'user', content: 'hi' }], max_tokens: 20 } },
++    get: (name: string) => name.toLowerCase() === 'authorization' ? `Bearer ${target.token}` : '',
++    set: vi.fn(),
++  })
++  const first = context()
++  const second = context()
++  const handler = kind === 'codex' ? codexProxyResponses : claudeProxyMessages
++  await handler(first)
++  await handler(second)
++  for await (const _chunk of first.body) { /* Drain the lazy response stream. */ }
++  for await (const _chunk of second.body) { /* Drain the lazy response stream. */ }
++  await vi.waitFor(() => {
++    for (const [index, observer] of observers.entries()) {
++      expect(observer).toHaveBeenCalledWith(expect.objectContaining({
++        type: 'response.completed',
++        data: expect.objectContaining({ response: expect.objectContaining({ id: `response-${index + 1}` }) }),
++      }))
++    }
++  })
++})
+diff --git a/tests/server/run-chat-load-state.test.ts b/tests/server/run-chat-load-state.test.ts
+index 1afd950..e3f8146 100644
+--- a/tests/server/run-chat-load-state.test.ts
++++ b/tests/server/run-chat-load-state.test.ts
+@@ -8,6 +8,8 @@ const buildDbHistoryMock = vi.fn()
+ const buildSnapshotAwareHistoryMock = vi.fn()
+ const getRecordedUsageTotalsMock = vi.fn()
+ const getUsageMock = vi.fn()
++const getLatestModelCallUsageMock = vi.fn()
++const getContextUsageMock = vi.fn()
+ 
+ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
+   getSession: getSessionMock,
+@@ -21,6 +23,8 @@ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', ()
+   updateUsage: vi.fn(),
+   getRecordedUsageTotals: getRecordedUsageTotalsMock,
+   getUsage: getUsageMock,
++  getLatestModelCallUsage: getLatestModelCallUsageMock,
++  getContextUsage: getContextUsageMock,
+ }))
+ 
+ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snapshot', () => ({
+@@ -43,7 +47,10 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/compression'
+   getOrCreateSession: vi.fn(),
+ }))
+ 
+-vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', () => ({
++// contextTokensFromUsageRecord stays real so the seeded context bar is checked
++// against the shipped cache-inclusive formula, not against a restatement of it.
++vi.mock('../../packages/server/src/modules/studio/services/chat-run/usage', async (importOriginal) => ({
++  ...(await importOriginal<typeof import('../../packages/server/src/modules/studio/services/chat-run/usage')>()),
+   calcAndUpdateUsage: vi.fn(),
+   estimateUsageTokensFromMessages: estimateUsageTokensFromMessagesMock,
+ }))
+@@ -79,6 +86,7 @@ vi.mock('../../packages/server/src/modules/studio/services/chat-run/response-str
+ describe('loadSessionStateFromDb', () => {
+   beforeEach(() => {
+     vi.clearAllMocks()
++    getContextUsageMock.mockReturnValue(undefined)
+     getSessionMock.mockReturnValue({
+       id: 'session-1',
+       profile: 'default',
+@@ -122,6 +130,14 @@ describe('loadSessionStateFromDb', () => {
+       apiCalls: 1,
+     })
+     getUsageMock.mockReturnValue({ input_tokens: 8_000, output_tokens: 1_000 })
++    getLatestModelCallUsageMock.mockReturnValue({
++      input_tokens: 8_000,
++      output_tokens: 1_000,
++      cache_read_tokens: 0,
++      cache_write_tokens: 0,
++      reasoning_tokens: 0,
++      usage_scope: 'model_call',
++    })
+   })
+ 
+   it('hydrates persisted usage without reconstructing complete history on resume', async () => {
+@@ -136,6 +152,83 @@ describe('loadSessionStateFromDb', () => {
+     expect(state.contextTokens).toBe(9_000)
+   })
+ 
++  it('seeds the context bar with the cached prompt prefix of the last model call', async () => {
++    // Warm coding-agent session: almost the whole prompt is served from the
++    // provider cache, so input+output alone would read 3.8k out of 229k.
++    getLatestModelCallUsageMock.mockReturnValue({
++      input_tokens: 3_614,
++      output_tokens: 179,
++      cache_read_tokens: 225_433,
++      cache_write_tokens: 0,
++      reasoning_tokens: 0,
++      usage_scope: 'model_call',
++    })
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++
++    const state = await loadSessionStateFromDb('session-1', new Map())
++
++    expect(state.contextTokens).toBe(229_226)
++  })
++
++  it('leaves the context bar unset when the session has no per-call usage row', async () => {
++    getLatestModelCallUsageMock.mockReturnValue(undefined)
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++
++    const state = await loadSessionStateFromDb('session-1', new Map())
++
++    expect(state.contextTokens).toBeUndefined()
++    expect(state.inputTokens).toBe(28_000)
++  })
++
++  it('restores a native context snapshot without using run totals as context', async () => {
++    getSessionMock.mockReturnValue({ id: 'session-1', source: 'coding_agent', agent: 'codex' })
++    getLatestModelCallUsageMock.mockReturnValue(undefined)
++    getContextUsageMock.mockReturnValue({ contextTokens: 66_624, updatedAt: 200 })
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++
++    const state = await loadSessionStateFromDb('session-1', new Map())
++
++    expect(state.contextTokens).toBe(66_624)
++    expect(state.inputTokens).toBe(28_000)
++    expect(state.outputTokens).toBe(2_000)
++  })
++
++  it('does not restore an older snapshot over a newer per-call measurement', async () => {
++    getContextUsageMock.mockReturnValue({ contextTokens: 66_624, updatedAt: 100 })
++    getLatestModelCallUsageMock.mockReturnValue({
++      input_tokens: 1_000, output_tokens: 100, cache_read_tokens: 9_000, created_at: 200,
++      usage_scope: 'model_call',
++    })
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++
++    const state = await loadSessionStateFromDb('session-1', new Map())
++
++    expect(state.contextTokens).toBe(10_100)
++  })
++
++  it('retains messages and accounting when the optional context snapshot cannot be read', async () => {
++    getContextUsageMock.mockImplementation(() => { throw new Error('snapshot unavailable') })
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++
++    const state = await loadSessionStateFromDb('session-1', new Map())
++
++    expect(state.messages).toHaveLength(3)
++    expect(state.inputTokens).toBe(28_000)
++    expect(state.outputTokens).toBe(2_000)
++    expect(state.contextTokens).toBe(9_000)
++  })
++
++  it('can restore a native snapshot even when per-call context lookup fails', async () => {
++    getLatestModelCallUsageMock.mockImplementation(() => { throw new Error('per-call lookup unavailable') })
++    getContextUsageMock.mockReturnValue({ contextTokens: 66_624, updatedAt: 200 })
++    const { loadSessionStateFromDb } = await import('../../packages/server/src/modules/studio/services/chat-run/load-state')
++
++    const state = await loadSessionStateFromDb('session-1', new Map())
++
++    expect(state.messages).toHaveLength(3)
++    expect(state.contextTokens).toBe(66_624)
++  })
++
+   it('restores the persisted tool-result anchor for a Hermes background delegation', async () => {
+     getSessionDetailPaginatedMock.mockReturnValue({
+       messages: [{
+diff --git a/tests/server/run-chat-usage-cursor.test.ts b/tests/server/run-chat-usage-cursor.test.ts
+index da7fb2c..8669afd 100644
+--- a/tests/server/run-chat-usage-cursor.test.ts
++++ b/tests/server/run-chat-usage-cursor.test.ts
+@@ -8,6 +8,8 @@ const getCompressionSnapshotMock = vi.fn()
+ const deleteCompressionSnapshotMock = vi.fn()
+ const getRecordedUsageTotalsMock = vi.fn()
+ const getUsageMock = vi.fn()
++const getLatestModelCallUsageMock = vi.fn()
++const getContextUsageMock = vi.fn()
+ 
+ vi.mock('../../packages/server/src/modules/studio/repositories/session-store', () => ({
+   getSessionDetail: getSessionDetailMock,
+@@ -22,8 +24,11 @@ vi.mock('../../packages/server/src/modules/studio/repositories/compression-snaps
+ }))
+ 
+ vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({
++  updateUsage: vi.fn(),
+   getRecordedUsageTotals: getRecordedUsageTotalsMock,
+   getUsage: getUsageMock,
++  getLatestModelCallUsage: getLatestModelCallUsageMock,
++  getContextUsage: getContextUsageMock,
+ }))
+ 
+ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
+@@ -33,6 +38,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
+ describe('cursor-aware chat usage', () => {
+   beforeEach(() => {
+     vi.clearAllMocks()
++    getContextUsageMock.mockReturnValue(undefined)
+     getSessionMock.mockReturnValue({ id: 'session-1', history_revision: 0 })
+     getSessionDetailMock.mockImplementation(() => {
+       throw new Error('full history must not be read')
+@@ -81,7 +87,15 @@ describe('cursor-aware chat usage', () => {
+ 
+   it('uses native Coding Agent usage without consulting messages or compression snapshots', async () => {
+     getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 100, outputTokens: 40 })
+-    getUsageMock.mockReturnValue({ input_tokens: 70, output_tokens: 10 })
++    // Lifetime totals are cost counters; the window holds the last call only,
++    // cached prefix included.
++    getLatestModelCallUsageMock.mockReturnValue({
++      input_tokens: 70,
++      output_tokens: 10,
++      cache_read_tokens: 6_000,
++      cache_write_tokens: 500,
++      usage_scope: 'model_call',
++    })
+     const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
+     const state: any = { messages: [], events: [], queue: [], isWorking: false }
+ 
+@@ -92,11 +106,41 @@ describe('cursor-aware chat usage', () => {
+     expect(usage).toEqual({
+       inputTokens: 100,
+       outputTokens: 40,
+-      contextInputTokens: 70,
++      contextInputTokens: 6_570,
+       contextOutputTokens: 10,
+     })
+     expect(getCompressionSnapshotMock).not.toHaveBeenCalled()
+     expect(getSessionDetailMock).not.toHaveBeenCalled()
+     expect(getSessionContextMessagesMock).not.toHaveBeenCalled()
+   })
++
++  it('uses a newer native snapshot after compaction without changing lifetime totals', async () => {
++    getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 900_000, outputTokens: 40_000 })
++    getLatestModelCallUsageMock.mockReturnValue({
++      input_tokens: 100_000, output_tokens: 1_000, created_at: 100, usage_scope: 'model_call',
++    })
++    getContextUsageMock.mockReturnValue({ contextTokens: 20_000, updatedAt: 200 })
++    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
++    const state: any = { messages: [], events: [], queue: [], isWorking: false }
++
++    const usage = await calcAndUpdateUsage('session-1', state, vi.fn(), { nativeSource: 'coding_agent' })
++
++    expect(usage.inputTokens).toBe(900_000)
++    expect(usage.outputTokens).toBe(40_000)
++    expect((usage.contextInputTokens || 0) + (usage.contextOutputTokens || 0)).toBe(20_000)
++    expect(getSessionDetailMock).not.toHaveBeenCalled()
++  })
++
++  it('reports no Coding Agent context reading when only run aggregates were recorded', async () => {
++    getRecordedUsageTotalsMock.mockReturnValue({ inputTokens: 100, outputTokens: 40 })
++    getLatestModelCallUsageMock.mockReturnValue(undefined)
++    const { calcAndUpdateUsage } = await import('../../packages/server/src/modules/studio/services/chat-run/usage')
++    const state: any = { messages: [], events: [], queue: [], isWorking: false }
++
++    const usage = await calcAndUpdateUsage('session-1', state, vi.fn(), {
++      nativeSource: 'coding_agent',
++    })
++
++    expect(usage).toEqual({ inputTokens: 100, outputTokens: 40 })
++  })
+ })
+diff --git a/tests/server/usage-recorder.test.ts b/tests/server/usage-recorder.test.ts
+index 3cefbf5..4537b6c 100644
+--- a/tests/server/usage-recorder.test.ts
++++ b/tests/server/usage-recorder.test.ts
+@@ -10,7 +10,7 @@ vi.mock('../../packages/server/src/modules/studio/public/logging', () => ({
+   logger: { warn: vi.fn() },
+ }))
+ 
+-import { normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/modules/studio/services/usage/usage-recorder'
++import { contextTokensFromModelCall, normalizeTokenUsage, recordSessionUsage } from '../../packages/server/src/modules/studio/services/usage/usage-recorder'
+ 
+ describe('usage recorder', () => {
+   beforeEach(() => {
+@@ -122,4 +122,39 @@ describe('usage recorder', () => {
+       isEstimated: false,
+     })
+   })
++
++  it('counts the cached prompt prefix as occupied context', () => {
++    // normalizeTokenUsage keeps the cached prefix in its own columns so cost
++    // accounting can price it separately; the window still holds all of it.
++    const usage = normalizeTokenUsage({
++      input_tokens: 2,
++      output_tokens: 844,
++      cache_read_input_tokens: 65_732,
++      cache_creation_input_tokens: 890,
++    })
++
++    expect(contextTokensFromModelCall(usage)).toEqual({
++      inputTokens: 66_624,
++      outputTokens: 844,
++    })
++  })
++
++  it('ignores reasoning tokens, which providers already count inside output', () => {
++    expect(contextTokensFromModelCall({
++      inputTokens: 100,
++      outputTokens: 40,
++      cacheReadTokens: 0,
++      cacheWriteTokens: 0,
++      reasoningTokens: 25,
++    } as any)).toEqual({ inputTokens: 100, outputTokens: 40 })
++  })
++
++  it('treats missing or negative provider counters as zero', () => {
++    expect(contextTokensFromModelCall({
++      inputTokens: undefined,
++      outputTokens: null,
++      cacheReadTokens: -5,
++      cacheWriteTokens: '2048',
++    })).toEqual({ inputTokens: 2_048, outputTokens: 0 })
++  })
+ })
+diff --git a/tests/server/usage-store.test.ts b/tests/server/usage-store.test.ts
+index 357f19e..241d5d6 100644
+--- a/tests/server/usage-store.test.ts
++++ b/tests/server/usage-store.test.ts
+@@ -22,6 +22,7 @@ vi.mock('../../packages/server/src/modules/studio/infrastructure/database/index'
+ import {
+   updateUsage,
+   getUsage,
++  getLatestModelCallUsage,
+   getUsageBatch,
+   deleteUsage,
+   getRecordedUsageSessionIds,
+@@ -62,6 +63,7 @@ describe('Usage Store (JSON fallback)', () => {
+       model: '',
+       profile: 'default',
+       created_at: 0,
++      usage_scope: 'run',
+     })
+     expect(mockJsonGet).toHaveBeenCalledWith('session_usage', 'session-1')
+   })
+@@ -72,6 +74,20 @@ describe('Usage Store (JSON fallback)', () => {
+     expect(result).toBeUndefined()
+   })
+ 
++  it('getLatestModelCallUsage returns the stored row only when it is per-call', () => {
++    mockJsonGet.mockReturnValue({ input_tokens: 200, output_tokens: 80, usage_scope: 'model_call' })
++    expect(getLatestModelCallUsage('session-1')).toEqual(expect.objectContaining({
++      input_tokens: 200,
++      output_tokens: 80,
++      usage_scope: 'model_call',
++    }))
++  })
++
++  it('getLatestModelCallUsage ignores run-scope aggregates', () => {
++    mockJsonGet.mockReturnValue({ input_tokens: 200, output_tokens: 80 })
++    expect(getLatestModelCallUsage('session-1')).toBeUndefined()
++  })
++
+   it('getUsageBatch returns empty map for empty input', () => {
+     const result = getUsageBatch([])
+     expect(result).toEqual({})
+@@ -240,6 +256,43 @@ describe('Usage Store (SQLite path)', () => {
+     })
+   })
+ 
++  it('getLatestModelCallUsage restricts the query to per-call rows', async () => {
++    let capturedSql = ''
++    getMock.mockImplementation(() => ({
++      input_tokens: 3_614,
++      output_tokens: 179,
++      cache_read_tokens: 225_433,
++      cache_write_tokens: 0,
++      reasoning_tokens: 0,
++      model: 'gpt-5.6-luna',
++      profile: 'default',
++      created_at: 0,
++      usage_scope: 'model_call',
++    }))
++    vi.doMock('../../packages/server/src/modules/studio/infrastructure/database/index', () => ({
++      isSqliteAvailable: () => true,
++      ensureTable: vi.fn(),
++      getDb: () => ({
++        prepare: vi.fn((sql: string) => {
++          capturedSql = sql
++          return { get: getMock }
++        }),
++      }),
++      jsonSet: vi.fn(),
++      jsonGet: vi.fn(),
++      jsonGetAll: vi.fn(),
++      jsonDelete: vi.fn(),
++    }))
++    const { getLatestModelCallUsage } = await import('../../packages/server/src/modules/studio/repositories/usage-store')
++
++    const result = getLatestModelCallUsage('s1')
++
++    expect(capturedSql).toContain("usage_scope = 'model_call'")
++    expect(capturedSql).toContain('ORDER BY id DESC')
++    expect(getMock).toHaveBeenCalledWith('s1')
++    expect(result?.cache_read_tokens).toBe(225_433)
++  })
++
+   it('getUsageBatch queries with IN clause', async () => {
+     allMock.mockReturnValue([
+       { session_id: 'a', input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, model: '', profile: 'default', created_at: 0 },
+-- 
+2.55.0.windows.2
+

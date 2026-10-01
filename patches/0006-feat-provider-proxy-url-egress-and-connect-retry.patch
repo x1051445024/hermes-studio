@@ -1,0 +1,1199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Date: Tue, 29 Sep 2026 14:00:00 +0800
+Subject: [PATCH] feat(providers): per-provider proxy_url egress and connect
+ retry
+
+Lets config.yaml custom providers carry proxy_url (provider editor API,
+validation and client UI) and routes coding-agent upstream requests
+through it: protocol/proxy-fetch.ts performs the HTTP CONNECT handshake
+(optionally over TLS to the proxy itself), tunnels node:http/https/http2
+across the socket with ALPN so h2-negotiating edges keep working, and
+gateway.ts egresses through it whenever a target carries proxyUrl.
+
+Connection-phase failures (TLS handshake rejection, connect timeouts,
+ECONNREFUSED and similar) are retried up to 4 times with linear backoff;
+only failures raised before any request byte was written are retried, so
+a retry can never duplicate a generation or double-bill.
+
+Also carries the client-side provider editor types and UI for
+extra_headers / preserve_client_identity (client companion to the
+server-side fields introduced by 0001) plus provider-network-review
+tests covering proxyFetch and the gateway.
+---
+ packages/client/src/api/hermes/system.ts      |   9 +
+ .../hermes/models/ProviderEditorModal.vue     |  86 ++++-
+ .../modules/coding-agents/protocol/gateway.ts |  88 ++++-
+ .../coding-agents/protocol/proxy-fetch.ts     | 354 ++++++++++++++++++
+ .../coding-agents/protocol/target-registry.ts |   2 +
+ .../services/claude-code/proxy.ts             |   6 +
+ .../coding-agents/services/codex/proxy.ts     |   6 +
+ .../modules/coding-agents/services/index.ts   |  22 +-
+ .../services/providers/provider-editor.ts     |  32 ++
+ .../studio/contracts/provider-compat.ts       |   9 +-
+ tests/server/provider-network-review.test.ts  | 103 +++++
+ 11 files changed, 707 insertions(+), 10 deletions(-)
+ create mode 100644 packages/server/src/modules/coding-agents/protocol/proxy-fetch.ts
+ create mode 100644 tests/server/provider-network-review.test.ts
+
+diff --git a/packages/client/src/api/hermes/system.ts b/packages/client/src/api/hermes/system.ts
+index 6bb390a..51ac5a1 100644
+--- a/packages/client/src/api/hermes/system.ts
++++ b/packages/client/src/api/hermes/system.ts
+@@ -89,6 +89,9 @@ export type ProviderEditableField =
+   | 'request_timeout_seconds'
+   | 'stale_timeout_seconds'
+   | 'extra_body'
++  | 'extra_headers'
++  | 'preserve_client_identity'
++  | 'proxy_url'
+ export type ProviderCredentialAction = 'keep' | 'replace' | 'clear'
+ 
+ export interface ProviderEditorDetail {
+@@ -109,6 +112,9 @@ export interface ProviderEditorDetail {
+   request_timeout_seconds?: number
+   stale_timeout_seconds?: number
+   extra_body?: Record<string, unknown>
++  extra_headers?: Record<string, unknown>
++  preserve_client_identity?: boolean
++  proxy_url?: string
+   connection_test_supported: boolean
+   connection_test_reason?: string
+   revision: string
+@@ -126,6 +132,9 @@ export interface ProviderEditorPatch {
+   request_timeout_seconds?: number | null
+   stale_timeout_seconds?: number | null
+   extra_body?: Record<string, unknown> | null
++  extra_headers?: Record<string, unknown> | null
++  preserve_client_identity?: boolean | null
++  proxy_url?: string | null
+ }
+ 
+ export interface ProviderEditorResponse {
+diff --git a/packages/client/src/components/hermes/models/ProviderEditorModal.vue b/packages/client/src/components/hermes/models/ProviderEditorModal.vue
+index 1d5a5da..2846d89 100644
+--- a/packages/client/src/components/hermes/models/ProviderEditorModal.vue
++++ b/packages/client/src/components/hermes/models/ProviderEditorModal.vue
+@@ -8,6 +8,7 @@ import {
+   NModal,
+   NSelect,
+   NSpin,
++  NSwitch,
+   NTag,
+   useDialog,
+   useMessage,
+@@ -54,6 +55,9 @@ const rateLimitDelay = ref<number | null>(null)
+ const requestTimeoutSeconds = ref<number | null>(null)
+ const staleTimeoutSeconds = ref<number | null>(null)
+ const extraBodyText = ref('')
++const extraHeadersText = ref('')
++const preserveClientIdentity = ref(false)
++const proxyUrlText = ref('')
+ 
+ const providerLabelInputProps = {
+   name: 'provider-display-name',
+@@ -67,6 +71,12 @@ const providerBaseUrlInputProps = {
+   spellcheck: false,
+   'data-form-type': 'other',
+ }
++const providerProxyUrlInputProps = {
++  name: 'provider-proxy-url',
++  autocomplete: 'off',
++  spellcheck: false,
++  'data-form-type': 'other',
++}
+ const providerModelInputProps = {
+   name: 'provider-preferred-model',
+   autocomplete: 'off',
+@@ -118,6 +128,9 @@ function resetDraft(next: ProviderEditorDetail) {
+   requestTimeoutSeconds.value = next.request_timeout_seconds ?? null
+   staleTimeoutSeconds.value = next.stale_timeout_seconds ?? null
+   extraBodyText.value = next.extra_body ? JSON.stringify(next.extra_body, null, 2) : ''
++  extraHeadersText.value = next.extra_headers ? JSON.stringify(next.extra_headers, null, 2) : ''
++  preserveClientIdentity.value = next.preserve_client_identity === true
++  proxyUrlText.value = next.proxy_url || ''
+   const contexts: Record<string, number | null> = {}
+   for (const model of new Set([...modelIds.value, ...Object.keys(next.context_lengths)])) {
+     contexts[model] = next.context_lengths[model] ?? null
+@@ -154,6 +167,18 @@ function parseExtraBody(): Record<string, unknown> | null {
+   return value as Record<string, unknown>
+ }
+ 
++function parseExtraHeaders(): Record<string, unknown> | null {
++  const raw = extraHeadersText.value.trim()
++  if (!raw) return null
++  let value: unknown
++  try { value = JSON.parse(raw) } catch { throw new Error(t('models.extraHeadersInvalid')) }
++  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('models.extraHeadersInvalid'))
++  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
++    if (!String(name || '').trim() || typeof headerValue !== 'string') throw new Error(t('models.extraHeadersInvalid'))
++  }
++  return value as Record<string, unknown>
++}
++
+ function buildPatch(): ProviderEditorPatch {
+   const patch: ProviderEditorPatch = {}
+   if (can('label')) patch.label = label.value.trim()
+@@ -181,6 +206,16 @@ function buildPatch(): ProviderEditorPatch {
+       const nextExtraBody = parseExtraBody()
+       if (JSON.stringify(nextExtraBody) !== JSON.stringify(detail.value.extra_body ?? null)) patch.extra_body = nextExtraBody
+     }
++    if (can('extra_headers')) {
++      const nextExtraHeaders = parseExtraHeaders()
++      if (JSON.stringify(nextExtraHeaders) !== JSON.stringify(detail.value.extra_headers ?? null)) patch.extra_headers = nextExtraHeaders
++    }
++    if (can('preserve_client_identity') && preserveClientIdentity.value !== (detail.value.preserve_client_identity ?? false)) {
++      patch.preserve_client_identity = preserveClientIdentity.value
++    }
++    if (can('proxy_url') && (proxyUrlText.value.trim() || null) !== (detail.value.proxy_url ?? null)) {
++      patch.proxy_url = proxyUrlText.value.trim() || null
++    }
+   }
+   return patch
+ }
+@@ -349,6 +384,24 @@ async function clearCredentialNow() {
+           <NSelect v-model:value="apiMode" :options="API_MODE_OPTIONS" />
+         </label>
+ 
++        <div v-if="can('preserve_client_identity')" class="identity-toggle">
++          <div class="identity-toggle-text">
++            <span>{{ t('models.preserveClientIdentity') }}</span>
++            <small>{{ t('models.preserveClientIdentityHint') }}</small>
++          </div>
++          <NSwitch v-model:value="preserveClientIdentity" />
++        </div>
++
++        <label v-if="can('proxy_url')" class="field">
++          <span>{{ t('models.providerProxyUrl') }}</span>
++          <NInput
++            v-model:value="proxyUrlText"
++            :input-props="providerProxyUrlInputProps"
++            :placeholder="t('models.providerProxyUrlPlaceholder')"
++          />
++          <small>{{ t('models.providerProxyUrlHint') }}</small>
++        </label>
++
+         <label v-if="can('preferred_model')" class="field">
+           <span>{{ t('models.providerPreferredModel') }}</span>
+           <NSelect
+@@ -393,7 +446,7 @@ async function clearCredentialNow() {
+         </section>
+ 
+         <details
+-          v-if="can('discover_models') || can('rate_limit_delay') || can('request_timeout_seconds') || can('stale_timeout_seconds') || can('extra_body')"
++          v-if="can('discover_models') || can('rate_limit_delay') || can('request_timeout_seconds') || can('stale_timeout_seconds') || can('extra_body') || can('extra_headers')"
+           class="context-section"
+         >
+           <summary>{{ t('models.providerAdvancedSettings') }}</summary>
+@@ -423,6 +476,16 @@ async function clearCredentialNow() {
+               />
+               <small>{{ t('models.extraBodyHint') }}</small>
+             </label>
++            <label v-if="can('extra_headers')" class="field">
++              <span>extra_headers (JSON)</span>
++              <NInput
++                v-model:value="extraHeadersText"
++                type="textarea"
++                :autosize="{ minRows: 3, maxRows: 10 }"
++                placeholder="{}"
++              />
++              <small>{{ t('models.extraHeadersHint') }}</small>
++            </label>
+           </div>
+         </details>
+ 
+@@ -585,6 +648,27 @@ async function clearCredentialNow() {
+   justify-content: flex-end;
+ }
+ 
++.identity-toggle {
++  align-items: center;
++  border: 1px solid $border-color;
++  border-radius: $radius-sm;
++  display: flex;
++  gap: 12px;
++  justify-content: space-between;
++  padding: 10px 12px;
++}
++
++.identity-toggle-text {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++
++  small {
++    color: $text-muted;
++    font-size: 12px;
++  }
++}
++
+ @media (max-width: 560px) {
+   .context-row {
+     grid-template-columns: 1fr;
+diff --git a/packages/server/src/modules/coding-agents/protocol/gateway.ts b/packages/server/src/modules/coding-agents/protocol/gateway.ts
+index f605921..735b943 100644
+--- a/packages/server/src/modules/coding-agents/protocol/gateway.ts
++++ b/packages/server/src/modules/coding-agents/protocol/gateway.ts
+@@ -1,9 +1,12 @@
+ /** A provider request issued by a Coding Agent proxy. */
++import { proxyFetch } from './proxy-fetch'
+ export interface AgentGatewayRequest {
+   url: string
+   apiKey: string
+   body: unknown
+   headers?: Record<string, string>
++  /** Local customization: egress through this HTTP(S) proxy instead of connecting directly. */
++  proxyUrl?: string
+   signal?: AbortSignal
+ }
+ 
+@@ -19,6 +22,53 @@ export class ProviderApiError extends Error {
+   }
+ }
+ 
++/**
++ * Local customization: retry a failed connection setup.
++ *
++ * This machine's path to some providers rejects the TLS handshake intermittently
++ * (measured: 0% direct, 0–25% through a local proxy). Every such failure happens
++ * before a single request byte is written, so the provider never saw the request
++ * and a retry cannot duplicate a generation or double-bill. Only connect-phase
++ * failures are retried; once a response has started, errors propagate untouched.
++ */
++const CONNECT_RETRY_ATTEMPTS = 4
++const CONNECT_RETRY_BASE_DELAY_MS = 150
++
++const RETRIABLE_CONNECT_CODES = new Set([
++  'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE',
++  'ERR_SSL_TLSV1_ALERT_HANDSHAKE_FAILURE',
++  'ERR_SSL_TLSV13_ALERT_HANDSHAKE_FAILURE',
++  'ERR_SSL_SSLV3_ALERT_CERTIFICATE_UNKNOWN',
++  'UND_ERR_CONNECT_TIMEOUT',
++  'ECONNREFUSED',
++  'EHOSTUNREACH',
++  'ENETUNREACH',
++  'ENOTFOUND',
++  'EAI_AGAIN',
++])
++
++function connectErrorCodes(error: unknown): string[] {
++  const codes: string[] = []
++  let current: any = error
++  for (let depth = 0; current && depth < 4; depth += 1) {
++    if (typeof current.code === 'string') codes.push(current.code)
++    current = current.cause
++  }
++  return codes
++}
++
++/** True only for failures raised before the request body was transmitted. */
++export function isRetriableConnectFailure(error: unknown): boolean {
++  if ((error as { retriable?: boolean } | null)?.retriable === true) return true
++  if (connectErrorCodes(error).some(code => RETRIABLE_CONNECT_CODES.has(code))) return true
++  const message = error instanceof Error ? error.message : String(error)
++  return /handshake failure|handshake with .* timed out|Timed out connecting to proxy|Timed out waiting for the proxy CONNECT response|ECONNREFUSED/i.test(message)
++}
++
++function delayConnectRetry(ms: number): Promise<void> {
++  return new Promise(resolve => { setTimeout(resolve, ms) })
++}
++
+ export class AgentRunGateway {
+   async completeJson<T = any>(request: AgentGatewayRequest): Promise<T> {
+     const res = await this.post(request)
+@@ -42,14 +92,40 @@ export class AgentRunGateway {
+     return res.body as any
+   }
+ 
+-  private post(request: AgentGatewayRequest): Promise<Response> {
++  private async post(request: AgentGatewayRequest): Promise<Response> {
++    let lastError: unknown
++    for (let attempt = 1; attempt <= CONNECT_RETRY_ATTEMPTS; attempt += 1) {
++      try {
++        return await this.postOnce(request)
++      } catch (error) {
++        lastError = error
++        if (attempt >= CONNECT_RETRY_ATTEMPTS || !isRetriableConnectFailure(error)) throw error
++        await delayConnectRetry(CONNECT_RETRY_BASE_DELAY_MS * attempt)
++      }
++    }
++    throw lastError
++  }
++
++  private postOnce(request: AgentGatewayRequest): Promise<Response> {
++    const headers = {
++      Authorization: `Bearer ${request.apiKey}`,
++      'Content-Type': 'application/json',
++      ...request.headers,
++    }
++    const proxyUrl = typeof request.proxyUrl === 'string' ? request.proxyUrl.trim() : ''
++    // Local customization: providers configured with a proxy URL egress through
++    // it (node's fetch/undici ignores the Windows system proxy entirely).
++    if (proxyUrl) {
++      return proxyFetch(request.url, {
++        method: 'POST',
++        headers,
++        body: JSON.stringify(request.body),
++        signal: request.signal,
++      }, proxyUrl)
++    }
+     return fetch(request.url, {
+       method: 'POST',
+-      headers: {
+-        Authorization: `Bearer ${request.apiKey}`,
+-        'Content-Type': 'application/json',
+-        ...request.headers,
+-      },
++      headers,
+       body: JSON.stringify(request.body),
+       signal: request.signal,
+     })
+diff --git a/packages/server/src/modules/coding-agents/protocol/proxy-fetch.ts b/packages/server/src/modules/coding-agents/protocol/proxy-fetch.ts
+new file mode 100644
+index 0000000..fba78dd
+--- /dev/null
++++ b/packages/server/src/modules/coding-agents/protocol/proxy-fetch.ts
+@@ -0,0 +1,354 @@
++/**
++ * Local customization: per-provider HTTP(S) proxy support for coding-agent
++ * upstream requests.
++ *
++ * Why this exists: Studio's server runtime is Electron/Node, and its global
++ * `fetch` (undici) never consults the Windows system proxy. Node does not expose
++ * undici's ProxyAgent for injection either, so a provider that is only reachable
++ * through a local proxy (e.g. 127.0.0.1:6785) fails with `fetch failed` — which
++ * surfaces to the agent CLI as `502 Bad Gateway`.
++ *
++ * Mechanism (no new dependencies on purpose, so this survives Studio upgrades as
++ * a plain source rebuild):
++ *   1. node:net connects to the proxy and performs the HTTP CONNECT handshake.
++ *   2. node:tls wraps the tunnelled socket for https targets and negotiates ALPN.
++ *   3. node:http / node:https / node:http2 drive the real request+response over
++ *      that socket via `createConnection`, so we keep Node's own HTTP parsing.
++ *   4. The result is wrapped back into a real `Response`, so callers keep using
++ *      res.ok / res.status / res.headers / res.text() / res.body unchanged.
++ *
++ * HTTP/2 is honoured when the edge negotiates it: some Cloudflare-fronted
++ * endpoints reject HTTP/1.1 connections outright, and a tunnelled socket whose
++ * ALPN says h2 must speak h2 or the request dies with EPROTO.
++ */
++import http from 'node:http'
++import http2 from 'node:http2'
++import https from 'node:https'
++import net from 'node:net'
++import tls from 'node:tls'
++import { Readable } from 'node:stream'
++
++export interface ProxyEndpoint {
++  host: string
++  port: number
++  /** https:// proxies are tunnelled through TLS to the proxy itself. */
++  secure: boolean
++  authorization?: string
++}
++
++export interface ProxyFetchInit {
++  method: string
++  headers: Record<string, string>
++  body?: string
++  signal?: AbortSignal
++}
++
++const CONNECT_TIMEOUT_MS = 15_000
++const TLS_TIMEOUT_MS = 20_000
++const RESPONSE_TIMEOUT_MS = 120_000
++
++/** Accepts `http://host:port`, `https://host:port`, `host:port` and user:pass@ forms. */
++export function parseProxyUrl(raw: unknown): ProxyEndpoint {
++  const trimmed = String(raw ?? '').trim()
++  if (!trimmed) throw new Error('Proxy URL must not be empty')
++  let parsed: URL
++  try {
++    parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`)
++  } catch {
++    throw new Error(`Invalid proxy URL: ${trimmed}`)
++  }
++  const protocol = parsed.protocol.replace(':', '').toLowerCase()
++  if (protocol !== 'http' && protocol !== 'https') {
++    throw new Error(`Unsupported proxy protocol "${protocol}://" (only http:// and https:// proxies are supported)`)
++  }
++  const port = parsed.port ? Number(parsed.port) : protocol === 'https' ? 443 : 80
++  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
++    throw new Error(`Invalid proxy port in ${trimmed}`)
++  }
++  const endpoint: ProxyEndpoint = { host: parsed.hostname, port, secure: protocol === 'https' }
++  if (parsed.username || parsed.password) {
++    const credentials = `${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`
++    endpoint.authorization = `Basic ${Buffer.from(credentials, 'utf8').toString('base64')}`
++  }
++  return endpoint
++}
++
++/**
++ * Marks a failure that happened **before any request bytes were sent** (proxy TCP
++ * connect, CONNECT handshake, TLS handshake inside the tunnel). The gateway may
++ * safely retry such a failure: the provider never saw the request, so there is no
++ * risk of duplicate generation or double billing. A proxy that explicitly refuses
++ * CONNECT (non-200) is NOT marked retriable — that is a configuration problem.
++ */
++export function retriableConnectError(message: string, cause?: unknown): Error & { retriable: true } {
++  const error = (cause === undefined ? new Error(message) : new Error(message, { cause })) as Error & { retriable: true }
++  error.retriable = true
++  return error
++}
++
++/** Opens a socket to the proxy and completes the CONNECT handshake to host:port. */
++function openProxySocket(
++  endpoint: ProxyEndpoint,
++  host: string,
++  port: number,
++  signal?: AbortSignal,
++): Promise<net.Socket | tls.TLSSocket> {
++  return new Promise((resolve, reject) => {
++    const socket = endpoint.secure
++      ? tls.connect({ host: endpoint.host, port: endpoint.port, servername: endpoint.host, ALPNProtocols: ['http/1.1'] })
++      : net.connect({ host: endpoint.host, port: endpoint.port })
++
++    let settled = false
++    const cleanup = () => {
++      signal?.removeEventListener('abort', onAbort)
++      socket.setTimeout(0)
++    }
++    const fail = (error: Error) => {
++      if (settled) return
++      settled = true
++      cleanup()
++      socket.destroy()
++      reject(error)
++    }
++    const onAbort = () => fail(new Error('Proxy request aborted'))
++    signal?.addEventListener('abort', onAbort, { once: true })
++    if (signal?.aborted) {
++      fail(new Error('Proxy request aborted'))
++      return
++    }
++
++    socket.setTimeout(CONNECT_TIMEOUT_MS, () => fail(
++      retriableConnectError(`Timed out connecting to proxy ${endpoint.host}:${endpoint.port}`),
++    ))
++    socket.once('error', (error: Error) => fail(retriableConnectError(
++      `Could not connect to proxy ${endpoint.host}:${endpoint.port} (${(error as NodeJS.ErrnoException).code || error.message})`,
++      error,
++    )))
++
++    const onReady = () => {
++      socket.write([
++        `CONNECT ${host}:${port} HTTP/1.1`,
++        `Host: ${host}:${port}`,
++        ...(endpoint.authorization ? [`Proxy-Authorization: ${endpoint.authorization}`] : []),
++        'Proxy-Connection: Keep-Alive',
++        '', '',
++      ].join('\r\n'))
++
++      let buffer = Buffer.alloc(0)
++      const onData = (chunk: Buffer) => {
++        buffer = Buffer.concat([buffer, chunk])
++        const headerEnd = buffer.indexOf('\r\n\r\n')
++        if (headerEnd === -1) return
++        socket.off('data', onData)
++        const head = buffer.subarray(0, headerEnd).toString('latin1')
++        const status = Number(head.split(' ')[1])
++        const rest = buffer.subarray(headerEnd + 4)
++        if (rest.length) socket.unshift(rest)
++        if (status === 200) {
++          cleanup()
++          settled = true
++          resolve(socket)
++          return
++        }
++        fail(new Error(
++          `Proxy ${endpoint.host}:${endpoint.port} refused CONNECT to ${host}:${port} (HTTP ${status || '?'})`,
++        ))
++      }
++      socket.on('data', onData)
++      socket.setTimeout(CONNECT_TIMEOUT_MS * 2, () => fail(
++        retriableConnectError(`Timed out waiting for the proxy CONNECT response from ${endpoint.host}:${endpoint.port}`),
++      ))
++    }
++
++    // A peer that drops the connection without an error event must fail fast
++    // instead of waiting out the CONNECT timeout.
++    socket.once('close', () => fail(retriableConnectError(
++      `Proxy ${endpoint.host}:${endpoint.port} closed the connection before the CONNECT response`,
++    )))
++
++    if (endpoint.secure) socket.once('secureConnect', onReady)
++    else socket.once('connect', onReady)
++  })
++}
++
++interface TargetSocket {
++  socket: net.Socket | tls.TLSSocket
++  alpn: string
++  secure: boolean
++}
++
++async function openTargetSocket(
++  host: string,
++  port: number,
++  secure: boolean,
++  endpoint: ProxyEndpoint,
++  signal?: AbortSignal,
++): Promise<TargetSocket> {
++  const raw = await openProxySocket(endpoint, host, port, signal)
++  if (!secure) {
++    raw.setTimeout(0)
++    return { socket: raw, alpn: '', secure: false }
++  }
++  const socket = await new Promise<tls.TLSSocket>((resolve, reject) => {
++    const secureSocket = tls.connect({ socket: raw, servername: host, ALPNProtocols: ['h2', 'http/1.1'] })
++    let settled = false
++    const fail = (error: Error) => {
++      if (settled) return
++      settled = true
++      secureSocket.destroy()
++      reject(error)
++    }
++    signal?.addEventListener('abort', () => fail(new Error('Proxy request aborted')), { once: true })
++    secureSocket.once('secureConnect', () => {
++      if (settled) return
++      settled = true
++      secureSocket.setTimeout(0)
++      resolve(secureSocket)
++    })
++    secureSocket.once('error', (error: Error) => fail(retriableConnectError(
++      `TLS handshake with ${host} through the proxy failed (${(error as NodeJS.ErrnoException).code || error.message})`,
++      error,
++    )))
++    secureSocket.setTimeout(TLS_TIMEOUT_MS, () => fail(
++      retriableConnectError(`TLS handshake with ${host} through the proxy timed out`),
++    ))
++    secureSocket.once('close', () => fail(retriableConnectError(
++      `TLS handshake with ${host} through the proxy was closed before completing`,
++    )))
++  })
++  return { socket, alpn: socket.alpnProtocol || '', secure: true }
++}
++
++function toResponse(
++  status: number,
++  statusText: string,
++  rawHeaders: http.IncomingHttpHeaders | Record<string, string | string[] | undefined>,
++  stream: Readable,
++): Response {
++  const headers = new Headers()
++  for (const [name, value] of Object.entries(rawHeaders)) {
++    if (value === undefined || name.startsWith(':')) continue
++    if (Array.isArray(value)) for (const item of value) headers.append(name, String(item))
++    else headers.append(name, String(value))
++  }
++  const safeStatus = status >= 200 && status <= 599 ? status : 502
++  return new Response(Readable.toWeb(stream) as unknown as ReadableStream, { status: safeStatus, statusText, headers })
++}
++
++function requestHttp1(
++  target: TargetSocket,
++  host: string,
++  port: number,
++  path: string,
++  init: ProxyFetchInit,
++  headers: Record<string, string>,
++  body: string,
++): Promise<Response> {
++  return new Promise((resolve, reject) => {
++    const client = target.secure ? https : http
++    const req = client.request({
++      host,
++      port,
++      path,
++      method: init.method,
++      headers,
++      agent: false,
++      createConnection: () => target.socket as net.Socket,
++      signal: init.signal,
++    }, (res) => {
++      res.setTimeout(RESPONSE_TIMEOUT_MS, () => res.destroy(new Error('Upstream response timed out')))
++      resolve(toResponse(res.statusCode || 0, res.statusMessage || '', res.headers, res))
++    })
++    req.once('error', reject)
++    req.end(body)
++  })
++}
++
++function requestHttp2(
++  target: TargetSocket,
++  host: string,
++  port: number,
++  path: string,
++  init: ProxyFetchInit,
++  headers: Record<string, string>,
++  body: string,
++): Promise<Response> {
++  return new Promise((resolve, reject) => {
++    const client = http2.connect(`https://${host}:${port}`, {
++      createConnection: () => target.socket as net.Socket,
++    })
++    let settled = false
++    const fail = (error: Error) => {
++      if (settled) return
++      settled = true
++      client.destroy()
++      reject(error)
++    }
++    client.once('error', fail)
++    client.once('close', () => {
++      if (!settled) fail(new Error('HTTP/2 session closed before a response arrived'))
++    })
++
++    const outgoing: Record<string, string> = {
++      ':method': init.method,
++      ':path': path,
++      ':authority': host,
++    }
++    for (const [name, value] of Object.entries(headers)) {
++      const lower = name.toLowerCase()
++      if (lower === 'host' || lower === 'connection' || name.startsWith(':')) continue
++      outgoing[lower] = value
++    }
++
++    const stream = client.request(outgoing)
++    stream.once('response', (resHeaders) => {
++      settled = true
++      const status = Number(resHeaders[':status'] || 0)
++      stream.setTimeout(RESPONSE_TIMEOUT_MS, () => stream.destroy(new Error('Upstream response timed out')))
++      stream.once('close', () => client.close())
++      resolve(toResponse(
++        status,
++        '',
++        resHeaders as Record<string, string | string[] | undefined>,
++        stream as unknown as Readable,
++      ))
++    })
++    stream.once('error', fail)
++    // http2 treats an empty-string chunk as "already ended" and throws
++    // ERR_STREAM_WRITE_AFTER_END, so only pass a payload when there is one.
++    if (body) stream.end(body)
++    else stream.end()
++  })
++}
++
++/**
++ * `fetch` for providers that must egress through an explicit HTTP(S) proxy.
++ * Mirrors the subset of RequestInit that the coding-agent gateway uses.
++ */
++export async function proxyFetch(url: string, init: ProxyFetchInit, proxyUrl: string): Promise<Response> {
++  const endpoint = parseProxyUrl(proxyUrl)
++  let target: URL
++  try {
++    target = new URL(url)
++  } catch {
++    throw new Error(`Invalid upstream URL: ${url}`)
++  }
++  const secure = target.protocol === 'https:'
++  if (!secure && target.protocol !== 'http:') {
++    throw new Error(`Unsupported upstream protocol "${target.protocol}" for proxied requests`)
++  }
++  const port = target.port ? Number(target.port) : secure ? 443 : 80
++  const path = `${target.pathname}${target.search}`
++
++  const headers: Record<string, string> = {}
++  for (const [name, value] of Object.entries(init.headers || {})) {
++    if (name.toLowerCase() === 'host') continue
++    headers[name] = value
++  }
++  const body = init.body ?? ''
++  if (body) headers['content-length'] = String(Buffer.byteLength(body))
++
++  const socket = await openTargetSocket(target.hostname, port, secure, endpoint, init.signal)
++  if (socket.alpn === 'h2') return requestHttp2(socket, target.hostname, port, path, init, headers, body)
++  return requestHttp1(socket, target.hostname, port, path, init, headers, body)
++}
+diff --git a/packages/server/src/modules/coding-agents/protocol/target-registry.ts b/packages/server/src/modules/coding-agents/protocol/target-registry.ts
+index 82edb8e..b4e601e 100644
+--- a/packages/server/src/modules/coding-agents/protocol/target-registry.ts
++++ b/packages/server/src/modules/coding-agents/protocol/target-registry.ts
+@@ -15,6 +15,8 @@ export interface AgentTargetInput {
+   extraHeaders?: Record<string, string>
+   /** Forward the spawned CLI's own identity headers (originator/user-agent/anthropic-beta/...) upstream. */
+   preserveClientIdentity?: boolean
++  /** Local customization: per-provider egress proxy for upstream requests (from the provider editor). */
++  proxyUrl?: string
+ }
+ 
+ export type NormalizedAgentTargetInput<T extends AgentTargetInput> = Omit<T, 'apiMode'> & {
+diff --git a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+index 02be9ff..dd94af2 100644
+--- a/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/claude-code/proxy.ts
+@@ -342,6 +342,7 @@ async function callAnthropicMessages(target: ClaudeCodeProxyTarget, body: any, c
+   const result = await withCustomEncryptedContentRetry(target, body, nextBody => agentRunGateway.completeJson({
+     url: anthropicMessagesUrl(target),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
+@@ -361,6 +362,7 @@ async function callOpenAiChat(target: ClaudeCodeProxyTarget, body: any, ctx: Con
+   return agentRunGateway.completeJson({
+     url: resolveChatCompletionsUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiChat(body, target),
+   })
+@@ -375,6 +377,7 @@ async function callOpenAiResponses(target: ClaudeCodeProxyTarget, body: any, ctx
+   return agentRunGateway.completeJson({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiResponses(body, target),
+   })
+@@ -416,6 +419,7 @@ async function openAiChatToAnthropicSseStream(target: ClaudeCodeProxyTarget, bod
+   const stream = await agentRunGateway.streamBytes({
+     url: resolveChatCompletionsUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiChat(body, target, true),
+   })
+@@ -434,6 +438,7 @@ async function anthropicMessagesSseStream(target: ClaudeCodeProxyTarget, body: a
+   const request = (nextBody: any) => agentRunGateway.streamBytes({
+     url: anthropicMessagesUrl(target),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
+@@ -485,6 +490,7 @@ async function openAiResponsesToAnthropicSseStream(target: ClaudeCodeProxyTarget
+   const stream = await agentRunGateway.streamBytes({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: anthropicToOpenAiResponses(body, target, true),
+   })
+diff --git a/packages/server/src/modules/coding-agents/services/codex/proxy.ts b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+index 3868c65..7bab1d6 100644
+--- a/packages/server/src/modules/coding-agents/services/codex/proxy.ts
++++ b/packages/server/src/modules/coding-agents/services/codex/proxy.ts
+@@ -210,6 +210,7 @@ async function callOpenAiChat(target: CodexProxyTarget, body: any, ctx: Context)
+   return agentRunGateway.completeJson({
+     url: chatCompletionsUrl(target),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: chatBody,
+   })
+@@ -225,6 +226,7 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any, ctx: C
+   return agentRunGateway.completeJson({
+     url: anthropicMessagesUrl(target),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
+@@ -244,6 +246,7 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any, ctx: Con
+   return agentRunGateway.completeJson({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: responsesBody,
+   })
+@@ -323,6 +326,7 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
+   const stream = await agentRunGateway.streamBytes({
+     url: chatCompletionsUrl(target),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: chatBody,
+   })
+@@ -343,6 +347,7 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
+   const stream = await agentRunGateway.streamBytes({
+     url: anthropicMessagesUrl(target),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: {
+       'x-api-key': target.apiKey,
+       'anthropic-version': '2023-06-01',
+@@ -367,6 +372,7 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any, ctx
+   const stream = await agentRunGateway.streamBytes({
+     url: resolveResponsesUrl(target.baseUrl),
+     apiKey: target.apiKey,
++    proxyUrl: target.proxyUrl,
+     headers: upstreamRequestHeaders(target, ctx),
+     body: responsesBody,
+   })
+diff --git a/packages/server/src/modules/coding-agents/services/index.ts b/packages/server/src/modules/coding-agents/services/index.ts
+index ee16908..177ec78 100644
+--- a/packages/server/src/modules/coding-agents/services/index.ts
++++ b/packages/server/src/modules/coding-agents/services/index.ts
+@@ -296,6 +296,8 @@ export interface CodingAgentLaunchInput extends CodingAgentConfigScope {
+   extraHeaders?: Record<string, string>
+   /** Provider switch: forward the spawned CLI's own identity headers upstream. */
+   preserveClientIdentity?: boolean
++  /** Provider-level egress proxy for coding-agent upstream requests. */
++  proxyUrl?: string
+   reasoningEffort?: string
+   sessionId?: string
+   agentSessionId?: string
+@@ -759,6 +761,7 @@ async function resolveStoredProviderLaunchInput(
+   let canonicalProvider = provider
+   let extraHeaders = normalizeExtraHeaderMap(input.extraHeaders)
+   let preserveClientIdentity = input.preserveClientIdentity === true
++  let proxyUrl = normalizeProxyUrl(input.proxyUrl)
+   const ignoredStaleProviderRuntime = belongsToDifferentBuiltinProvider(provider, baseUrl)
+   if (ignoredStaleProviderRuntime) {
+     baseUrl = ''
+@@ -768,7 +771,7 @@ async function resolveStoredProviderLaunchInput(
+   // Provider-level `extra_headers` must be re-read from the config on every
+   // launch, so a complete runtime triple no longer short-circuits resolution.
+   if (!provider) {
+-    return { ...input, profile, provider: input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode, ...(extraHeaders ? { extraHeaders } : {}), ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}) }
++    return { ...input, profile, provider: input.provider, model: model || input.model, workspace, baseUrl, apiKey, apiMode, ...(extraHeaders ? { extraHeaders } : {}), ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}), ...(proxyUrl ? { proxyUrl } : {}) }
+   }
+ 
+   let config: Record<string, any> = {}
+@@ -802,6 +805,8 @@ async function resolveStoredProviderLaunchInput(
+     const configuredHeaders = normalizeExtraHeaderMap(customEntry.extra_headers)
+     if (configuredHeaders) extraHeaders = { ...(extraHeaders || {}), ...configuredHeaders }
+     if (customEntry.preserve_client_identity === true) preserveClientIdentity = true
++    const configuredProxyUrl = normalizeProxyUrl(customEntry.proxy_url)
++    if (configuredProxyUrl) proxyUrl = configuredProxyUrl
+   }
+ 
+   const canonicalProviderKey = providerKeyWithoutCustomPrefix(canonicalProvider)
+@@ -833,9 +838,15 @@ async function resolveStoredProviderLaunchInput(
+     apiMode,
+     ...(extraHeaders ? { extraHeaders } : {}),
+     ...(preserveClientIdentity ? { preserveClientIdentity: true } : {}),
++    ...(proxyUrl ? { proxyUrl } : {}),
+   }
+ }
+ 
++function normalizeProxyUrl(value: unknown): string | undefined {
++  const trimmed = String(value ?? '').trim()
++  return trimmed || undefined
++}
++
+ function normalizeStoredLaunchApiMode(value: unknown): ApiMode | undefined {
+   if (!value) return undefined
+   try {
+@@ -1411,7 +1422,7 @@ function codexRuntimeUserConfig(...contents: Array<string | null | undefined>):
+     sectionBlocks,
+     featureLines: [...featureLines.values()],
+   }
+-}
++} 
+ 
+ function codexMcpConfigToml(
+   profile: string,
+@@ -1931,6 +1942,7 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
+           chatSessionId,
+           extraHeaders: resolved.extraHeaders,
+           preserveClientIdentity: resolved.preserveClientIdentity,
++          proxyUrl: resolved.proxyUrl,
+         }, apiKey, token)
+         await atomicWritePrivateFile(targetPath, content)
+       } catch {
+@@ -2063,6 +2075,7 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
+         chatSessionId,
+         extraHeaders: resolved.extraHeaders,
+         preserveClientIdentity: resolved.preserveClientIdentity,
++        proxyUrl: resolved.proxyUrl,
+       }, token)
+       restoredRouteKeys.add(routeKey)
+       restoredCount += 1
+@@ -3263,6 +3276,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           chatSessionId: isolatedInput.sessionId,
+           extraHeaders: input.extraHeaders,
+           preserveClientIdentity: input.preserveClientIdentity,
++          proxyUrl: input.proxyUrl,
+         })
+       : null
+     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
+@@ -3336,6 +3350,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           chatSessionId: isolatedInput.sessionId,
+           extraHeaders: input.extraHeaders,
+           preserveClientIdentity: input.preserveClientIdentity,
++          proxyUrl: input.proxyUrl,
+         })
+       : null
+     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
+@@ -3430,6 +3445,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           chatSessionId: isolatedInput.sessionId,
+           extraHeaders: input.extraHeaders,
+           preserveClientIdentity: input.preserveClientIdentity,
++          proxyUrl: input.proxyUrl,
+         })
+       : null
+     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
+@@ -3510,6 +3526,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           chatSessionId: isolatedInput.sessionId,
+           extraHeaders: input.extraHeaders,
+           preserveClientIdentity: input.preserveClientIdentity,
++          proxyUrl: input.proxyUrl,
+         })
+       : null
+     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
+@@ -3567,6 +3584,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
+           chatSessionId: isolatedInput.sessionId,
+           extraHeaders: input.extraHeaders,
+           preserveClientIdentity: input.preserveClientIdentity,
++          proxyUrl: input.proxyUrl,
+         })
+       : null
+     const baseRuntime = await ensureOpenCodeScopedBaseConfigFiles(scope, scopedSystemPrompt, workspaceDir)
+diff --git a/packages/server/src/modules/hermes/services/providers/provider-editor.ts b/packages/server/src/modules/hermes/services/providers/provider-editor.ts
+index c966bee..4cbb0c9 100644
+--- a/packages/server/src/modules/hermes/services/providers/provider-editor.ts
++++ b/packages/server/src/modules/hermes/services/providers/provider-editor.ts
+@@ -28,6 +28,7 @@ export type ProviderEditableField =
+   | 'extra_body'
+   | 'extra_headers'
+   | 'preserve_client_identity'
++  | 'proxy_url'
+ export type CredentialAction = 'keep' | 'replace' | 'clear'
+ 
+ export interface ProviderEditorDetail {
+@@ -50,6 +51,8 @@ export interface ProviderEditorDetail {
+   extra_body?: Record<string, unknown>
+   extra_headers?: Record<string, unknown>
+   preserve_client_identity?: boolean
++  /** Local customization: egress proxy for coding-agent upstream requests. */
++  proxy_url?: string
+   connection_test_supported: boolean
+   connection_test_reason?: string
+   revision: string
+@@ -70,6 +73,7 @@ export interface ProviderEditorPatch {
+   extra_body?: Record<string, unknown> | null
+   extra_headers?: Record<string, unknown> | null
+   preserve_client_identity?: boolean | null
++  proxy_url?: string | null
+ }
+ 
+ export class ProviderEditorError extends Error {
+@@ -260,6 +264,7 @@ const CUSTOM_PROVIDER_EDITABLE_FIELDS: ProviderEditableField[] = [
+   'extra_body',
+   'extra_headers',
+   'preserve_client_identity',
++  'proxy_url',
+ ]
+ 
+ function editableFields(source: ProviderSource): ProviderEditableField[] {
+@@ -350,6 +355,8 @@ function buildDetailFromRaw(
+     ? existingAlias(entry, ['preserve_client_identity', 'preserveClientIdentity'], undefined)
+     : undefined
+   const preserveClientIdentity = typeof rawPreserveClientIdentity === 'boolean' ? rawPreserveClientIdentity : undefined
++  const rawProxyUrl = entry ? existingAlias(entry, ['proxy_url', 'proxyUrl'], undefined) : undefined
++  const proxyUrl = typeof rawProxyUrl === 'string' && rawProxyUrl.trim() ? rawProxyUrl.trim() : undefined
+   const testCapability = connectionTestCapability(apiMode)
+   const revision = revisionFor({
+     providerId,
+@@ -383,6 +390,7 @@ function buildDetailFromRaw(
+     ...(extraBody !== undefined ? { extra_body: extraBody } : {}),
+     ...(extraHeaders !== undefined ? { extra_headers: extraHeaders } : {}),
+     ...(preserveClientIdentity !== undefined ? { preserve_client_identity: preserveClientIdentity } : {}),
++    ...(proxyUrl !== undefined ? { proxy_url: proxyUrl } : {}),
+     connection_test_supported: testCapability.supported,
+     ...(testCapability.reason ? { connection_test_reason: testCapability.reason } : {}),
+     revision,
+@@ -607,6 +615,7 @@ function changedFields(before: ProviderEditorDetail, patch: ProviderEditorPatch)
+   if (patch.extra_body !== undefined && JSON.stringify(stableObject(patch.extra_body)) !== JSON.stringify(stableObject(before.extra_body ?? null))) fields.push('extra_body')
+   if (patch.extra_headers !== undefined && JSON.stringify(stableObject(patch.extra_headers)) !== JSON.stringify(stableObject(before.extra_headers ?? null))) fields.push('extra_headers')
+   if (patch.preserve_client_identity !== undefined && (patch.preserve_client_identity ?? null) !== (before.preserve_client_identity ?? null)) fields.push('preserve_client_identity')
++  if (patch.proxy_url !== undefined && (patch.proxy_url ?? null) !== (before.proxy_url ?? null)) fields.push('proxy_url')
+   if (patch.credential_action === 'replace') fields.push('api_key_replaced')
+   if (patch.credential_action === 'clear') fields.push('api_key_cleared')
+   return fields
+@@ -632,6 +641,7 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
+   if (patch.extra_body !== undefined && !allowed.has('extra_body')) throw new ProviderEditorError('Extra request body is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.extra_headers !== undefined && !allowed.has('extra_headers')) throw new ProviderEditorError('Extra request headers are read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.preserve_client_identity !== undefined && !allowed.has('preserve_client_identity')) throw new ProviderEditorError('Client identity forwarding is read-only', 400, 'FIELD_READ_ONLY')
++  if (patch.proxy_url !== undefined && !allowed.has('proxy_url')) throw new ProviderEditorError('Provider proxy is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.credential_action && patch.credential_action !== 'keep' && !allowed.has('api_key')) throw new ProviderEditorError('Provider credential is read-only', 400, 'FIELD_READ_ONLY')
+   if (patch.label !== undefined && (!patch.label.trim() || patch.label.trim().length > 100)) throw new ProviderEditorError('Provider label must contain 1-100 characters', 400, 'INVALID_LABEL')
+   if (patch.base_url !== undefined) normalizeUrl(patch.base_url)
+@@ -667,6 +677,23 @@ function validatePatch(before: ProviderEditorDetail, patch: ProviderEditorPatch)
+     && typeof patch.preserve_client_identity !== 'boolean') {
+     throw new ProviderEditorError('preserve_client_identity must be a boolean', 400, 'INVALID_PRESERVE_CLIENT_IDENTITY')
+   }
++  if (patch.proxy_url !== undefined && patch.proxy_url !== null) {
++    if (typeof patch.proxy_url !== 'string') {
++      throw new ProviderEditorError('proxy_url must be a string', 400, 'INVALID_PROXY_URL')
++    }
++    const proxyUrl = patch.proxy_url.trim()
++    if (proxyUrl.length > 500) {
++      throw new ProviderEditorError('proxy_url must not exceed 500 characters', 400, 'INVALID_PROXY_URL')
++    }
++    if (proxyUrl) {
++      try {
++        const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(proxyUrl) ? proxyUrl : `http://${proxyUrl}`)
++        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('unsupported scheme')
++      } catch {
++        throw new ProviderEditorError('proxy_url must be a valid http:// or https:// proxy', 400, 'INVALID_PROXY_URL')
++      }
++    }
++  }
+ }
+ 
+ export async function updateProviderEditorDetail(
+@@ -740,6 +767,11 @@ export async function updateProviderEditorDetail(
+         if (patch.preserve_client_identity === null) deleteAliases(source.configEntry!, ['preserve_client_identity', 'preserveClientIdentity'])
+         else setExistingAlias(source.configEntry!, ['preserve_client_identity', 'preserveClientIdentity'], patch.preserve_client_identity, 'preserve_client_identity')
+       }
++      if (patch.proxy_url !== undefined) {
++        const proxyUrl = typeof patch.proxy_url === 'string' ? patch.proxy_url.trim() : ''
++        if (patch.proxy_url === null || !proxyUrl) deleteAliases(source.configEntry!, ['proxy_url', 'proxyUrl'])
++        else setExistingAlias(source.configEntry!, ['proxy_url', 'proxyUrl'], proxyUrl, 'proxy_url')
++      }
+     }
+ 
+     if (credentialAction !== 'keep') {
+diff --git a/packages/server/src/modules/studio/contracts/provider-compat.ts b/packages/server/src/modules/studio/contracts/provider-compat.ts
+index 2e49c2e..0f5371c 100644
+--- a/packages/server/src/modules/studio/contracts/provider-compat.ts
++++ b/packages/server/src/modules/studio/contracts/provider-compat.ts
+@@ -23,7 +23,7 @@ const KNOWN_KEYS = new Set([
+   'models',
+   'context_length', 'rate_limit_delay',
+   'request_timeout_seconds', 'stale_timeout_seconds',
+-  'discover_models', 'extra_body', 'extra_headers', 'preserve_client_identity',
++  'discover_models', 'extra_body', 'extra_headers', 'preserve_client_identity', 'proxy_url',
+ ])
+ 
+ const CAMEL_ALIASES: Record<string, string> = {
+@@ -55,6 +55,7 @@ export interface NormalizedCustomProvider {
+   extra_body?: Record<string, any>
+   extra_headers?: Record<string, string>
+   preserve_client_identity?: boolean
++  proxy_url?: string
+ }
+ 
+ function looksLikeUrl(value: string): boolean {
+@@ -185,6 +186,12 @@ export function normalizeCustomProviderEntry(
+     normalized.preserve_client_identity = e.preserve_client_identity
+   }
+ 
++  // proxy_url: per-provider egress proxy for coding-agent upstream requests.
++  if (typeof e.proxy_url === 'string') {
++    const proxyUrl = e.proxy_url.trim()
++    if (proxyUrl) normalized.proxy_url = proxyUrl
++  }
++
+   // extra_headers: request headers appended to coding-agent upstream requests.
+   // Only string values are forwarded; anything else is dropped at read time.
+   if (e.extra_headers && typeof e.extra_headers === 'object' && !Array.isArray(e.extra_headers)) {
+diff --git a/tests/server/provider-network-review.test.ts b/tests/server/provider-network-review.test.ts
+new file mode 100644
+index 0000000..0409e3f
+--- /dev/null
++++ b/tests/server/provider-network-review.test.ts
+@@ -0,0 +1,103 @@
++import { once } from 'node:events'
++import http from 'node:http'
++import net from 'node:net'
++import { gzipSync } from 'node:zlib'
++import { afterEach, describe, expect, it, vi } from 'vitest'
++import { AgentRunGateway } from '../../packages/server/src/modules/coding-agents/protocol/gateway'
++import { proxyFetch } from '../../packages/server/src/modules/coding-agents/protocol/proxy-fetch'
++
++const cleanup: Array<() => Promise<void>> = []
++
++afterEach(async () => {
++  vi.unstubAllGlobals()
++  await Promise.all(cleanup.splice(0).map(close => close()))
++})
++
++async function serve(handler: http.RequestListener) {
++  const server = http.createServer(handler)
++  const sockets = new Set<net.Socket>()
++  server.on('connection', socket => {
++    sockets.add(socket)
++    socket.on('close', () => sockets.delete(socket))
++  })
++  server.listen(0, '127.0.0.1')
++  await once(server, 'listening')
++  cleanup.push(async () => {
++    for (const socket of sockets) socket.destroy()
++    await new Promise<void>(resolve => server.close(() => resolve()))
++  })
++  return { server, port: (server.address() as net.AddressInfo).port }
++}
++
++async function tunnelTo(port: number) {
++  let tunnels = 0
++  let tunneledBytes = 0
++  const proxy = await serve((_req, res) => res.writeHead(405).end())
++  proxy.server.on('connect', (_req, socket, head) => {
++    tunnels += 1
++    const upstream = net.connect(port, '127.0.0.1', () => {
++      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
++      if (head.length) upstream.write(head)
++      socket.on('data', chunk => { tunneledBytes += chunk.length })
++      socket.pipe(upstream).pipe(socket)
++    })
++    socket.on('close', () => upstream.destroy())
++    upstream.on('error', () => socket.destroy())
++  })
++  return {
++    url: `http://127.0.0.1:${proxy.port}`,
++    tunnels: () => tunnels,
++    bytes: () => tunneledBytes,
++  }
++}
++
++describe('provider network review regressions', () => {
++  it('sends HTTP/1 request bytes through CONNECT rather than opening a direct connection', async () => {
++    const upstream = await serve((_req, res) => {
++      res.setHeader('content-type', 'application/json')
++      res.end('{"ok":true}')
++    })
++    const proxy = await tunnelTo(upstream.port)
++    const response = await proxyFetch(`http://127.0.0.1:${upstream.port}/v1/responses`, {
++      method: 'POST', headers: {}, body: '{}',
++    }, proxy.url)
++    expect(await response.json()).toEqual({ ok: true })
++    expect(proxy.tunnels()).toBe(1)
++    expect(proxy.bytes()).toBeGreaterThan(0)
++  })
++
++  it('decodes compressed upstream responses like fetch', async () => {
++    const upstream = await serve((_req, res) => {
++      res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip' })
++      res.end(gzipSync('{"ok":true}'))
++    })
++    const proxy = await tunnelTo(upstream.port)
++    const response = await proxyFetch(`http://127.0.0.1:${upstream.port}/v1/responses`, {
++      method: 'POST', headers: {}, body: '{}',
++    }, proxy.url)
++    expect(await response.text()).toBe('{"ok":true}')
++  })
++
++  it('does not start a request when its signal is already aborted', async () => {
++    const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}'))
++    vi.stubGlobal('fetch', fetchMock)
++    await expect(new AgentRunGateway().completeJson({
++      url: 'https://provider.example/v1/responses',
++      apiKey: 'test-key',
++      body: {},
++      signal: AbortSignal.abort(),
++    })).rejects.toMatchObject({ name: 'AbortError' })
++    expect(fetchMock).not.toHaveBeenCalled()
++  })
++
++  it('does not classify arbitrary error messages as safe connection retries', async () => {
++    const fetchMock = vi.fn().mockRejectedValue(new Error('response failed after ECONNREFUSED in upstream log'))
++    vi.stubGlobal('fetch', fetchMock)
++    await expect(new AgentRunGateway().completeJson({
++      url: 'https://provider.example/v1/responses',
++      apiKey: 'test-key',
++      body: {},
++    })).rejects.toThrow('response failed')
++    expect(fetchMock).toHaveBeenCalledTimes(1)
++  })
++})
+-- 
+2.55.0.windows.2
+

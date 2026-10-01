@@ -1,0 +1,578 @@
+From: Hermes Studio Local Patches <local-patches@example.invalid>
+Subject: [PATCH 0005] feat(group-chat): per-room full local access switch
+
+Restore the local "full local access" room switch (lost in the 0.7.18
+upgrade) on the 0.7.18 source layout: a per-room, owner-only toggle that
+stops injecting the non-owner workspace-scoped security prompt into
+local group-chat Agent runs triggered by non-owner members. The
+gc_rooms.fullLocalAccess column already exists in existing databases;
+fresh installs get it from the schema. Changing the switch fences and
+interrupts current room Agent sessions, like the workspace switch.
+
+Applies on top of patches 0001-0004. Run
+`vitest run tests/server/group-chat-full-local-access.test.ts`.
+
+---
+diff --git a/packages/server/src/modules/studio/infrastructure/database/schemas.ts b/packages/server/src/modules/studio/infrastructure/database/schemas.ts
+index 71ea399..69e8e7e 100644
+--- a/packages/server/src/modules/studio/infrastructure/database/schemas.ts
++++ b/packages/server/src/modules/studio/infrastructure/database/schemas.ts
+@@ -28,11 +28,23 @@ export const USAGE_SCHEMA: Record<string, string> = {
+   profile: "TEXT NOT NULL DEFAULT 'default'",
+   is_estimated: 'INTEGER NOT NULL DEFAULT 0',
+   created_at: 'INTEGER NOT NULL DEFAULT 0',
++  context_history_revision: 'INTEGER NOT NULL DEFAULT 0',
++  context_native_session_id: "TEXT NOT NULL DEFAULT ''",
+ }
+ 
+ export const USAGE_RUN_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS idx_session_usage_run
+   ON ${USAGE_TABLE}(session_id, run_id, source) WHERE run_id <> ''`
+ 
++// Measurements are not billable usage and must never enter ledger aggregates.
++export const CONTEXT_USAGE_TABLE = 'session_context_usage'
++export const CONTEXT_USAGE_SCHEMA: Record<string, string> = {
++  session_id: 'TEXT PRIMARY KEY',
++  context_tokens: 'INTEGER NOT NULL',
++  updated_at: 'INTEGER NOT NULL',
++  context_history_revision: 'INTEGER NOT NULL DEFAULT 0',
++  context_native_session_id: "TEXT NOT NULL DEFAULT ''",
++}
++
+ // ============================================================================
+ // Session Store (session-store.ts)
+ // ============================================================================
+@@ -737,6 +749,7 @@ export const GC_ROOMS_SCHEMA: Record<string, string> = {
+   guestAgentApproval: "TEXT NOT NULL DEFAULT 'owner'",
+   maxGuestAgentsPerMember: 'INTEGER NOT NULL DEFAULT 1',
+   allowRemoteWorkspaceAccess: 'INTEGER NOT NULL DEFAULT 0',
++  fullLocalAccess: 'INTEGER NOT NULL DEFAULT 0',
+   agentHandoffEnabled: 'INTEGER NOT NULL DEFAULT 1',
+   agentHandoffMaxDepth: 'INTEGER',
+   agentHandoffUnlimited: 'INTEGER NOT NULL DEFAULT 0',
+@@ -1499,6 +1512,7 @@ export function initAllHermesTables(): void {
+     // Usage store
+     syncTable(USAGE_TABLE, USAGE_SCHEMA, { primaryKey: 'id' })
+     db.exec(USAGE_RUN_INDEX)
++    syncTable(CONTEXT_USAGE_TABLE, CONTEXT_USAGE_SCHEMA, { primaryKey: 'session_id' })
+ 
+     // Session store
+     syncTable(SESSION_CATEGORIES_TABLE, SESSION_CATEGORIES_SCHEMA, {
+diff --git a/packages/server/src/modules/studio/sockets/group-chat.ts b/packages/server/src/modules/studio/sockets/group-chat.ts
+index 77b9ae0..64e5296 100644
+--- a/packages/server/src/modules/studio/sockets/group-chat.ts
++++ b/packages/server/src/modules/studio/sockets/group-chat.ts
+@@ -334,6 +334,7 @@ export interface RoomInfo {
+     guestAgentApproval: 'owner'
+     maxGuestAgentsPerMember: number
+     allowRemoteWorkspaceAccess: number
++    fullLocalAccess: number
+     agentHandoffEnabled: number
+     agentHandoffMaxDepth: number | null
+     agentHandoffUnlimited: number
+@@ -363,6 +364,7 @@ const ROOM_SELECT_COLUMNS = [
+     'guestAgentApproval',
+     'maxGuestAgentsPerMember',
+     'allowRemoteWorkspaceAccess',
++    'fullLocalAccess',
+     'agentHandoffEnabled',
+     'agentHandoffMaxDepth',
+     'agentHandoffUnlimited',
+@@ -1095,6 +1097,16 @@ class ChatStorage {
+         return this.getRoom(roomId) || null
+     }
+ 
++    updateRoomFullLocalAccess(roomId: string, enabled: boolean): RoomInfo | null {
++        const room = this.getRoom(roomId)
++        if (!room) return null
++        const next = enabled ? 1 : 0
++        if (Number(room.fullLocalAccess || 0) === next) return room
++        const seed = this.newRoomSessionSeed()
++        this.db()?.prepare('UPDATE gc_rooms SET fullLocalAccess = ?, sessionSeed = ? WHERE id = ?').run(next, seed, roomId)
++        return this.getRoom(roomId) || null
++    }
++
+     updateRoomConfig(roomId: string, config: RoomSummaryConfig & RoomAgentHandoffConfig): void {
+         const sets: string[] = []
+         const vals: any[] = []
+diff --git a/packages/server/src/modules/studio/services/group-chat/agent-clients.ts b/packages/server/src/modules/studio/services/group-chat/agent-clients.ts
+index 3de0c7e..c5b7065 100644
+--- a/packages/server/src/modules/studio/services/group-chat/agent-clients.ts
++++ b/packages/server/src/modules/studio/services/group-chat/agent-clients.ts
+@@ -1096,10 +1096,14 @@ export class AgentClient implements GroupAgentExecutor {
+                 'The authorization expires when this run finishes. Never repeat the token in chat output.',
+             ].join('\n'))
+         }
++        // When the room owner has enabled full local access for this room, non-owner
++        // requests are intentionally NOT scoped to a workspace: local agents run with
++        // the same file access as the owner. This is a per-room, owner-only decision.
+         if (
+             msg?.targetOwnerMemberId
+             && msg.senderId
+             && msg.senderId !== msg.targetOwnerMemberId
++            && !Number(room?.fullLocalAccess || 0)
+         ) {
+             promptParts.push(buildNonOwnerRequestSecurityPrompt({
+                 requesterName: msg.senderName,
+diff --git a/packages/server/src/modules/studio/controllers/group-chat.ts b/packages/server/src/modules/studio/controllers/group-chat.ts
+index 4f0b6ef..7c5a5a6 100644
+--- a/packages/server/src/modules/studio/controllers/group-chat.ts
++++ b/packages/server/src/modules/studio/controllers/group-chat.ts
+@@ -236,6 +236,9 @@ export function serializeRoom(room: any, includeManageFields: boolean, canMentio
+     if (Object.prototype.hasOwnProperty.call(room, 'workspace')) {
+         serialized.workspace = includeManageFields ? String(room.workspace || '') : ''
+     }
++    if (Object.prototype.hasOwnProperty.call(room, 'fullLocalAccess')) {
++        serialized.fullLocalAccess = includeManageFields ? Number(room.fullLocalAccess || 0) : 0
++    }
+     return serialized
+ }
+ 
+@@ -1468,6 +1471,54 @@ export async function listRoomHandoffs(ctx: any) {
+ }
+ 
+ // Update room workspace
++// Update room full-local-access switch (owner-only, per-room).
++export async function updateRoomFullLocalAccess(ctx: any) {
++    if (!chatServer) {
++        ctx.status = 503
++        ctx.body = { error: 'Group chat not initialized' }
++        return
++    }
++
++    const storage = chatServer.getStorage()
++    const roomId = ctx.params.roomId
++    const room = storage.getRoom(roomId)
++    if (!room) {
++        ctx.status = 404
++        ctx.body = { error: 'Room not found' }
++        return
++    }
++    if (!canManageRoom(storage, roomId, ctx.state?.user)) {
++        ctx.status = 403
++        ctx.body = { error: 'Access denied' }
++        return
++    }
++
++    const { enabled } = ctx.request.body as { enabled?: unknown }
++    if (typeof enabled !== 'boolean') {
++        ctx.status = 400
++        ctx.body = { error: 'enabled must be a boolean' }
++        return
++    }
++
++    const next = enabled ? 1 : 0
++    if (Number(room.fullLocalAccess || 0) !== next) {
++        const releaseSessionFence = chatServer.fenceCurrentRoomAgentSessions(roomId)
++        try {
++            await chatServer.agentClients.interruptRoom(roomId)
++        } catch (err) {
++            releaseSessionFence()
++            throw err
++        }
++    }
++    ctx.body = {
++        room: serializeRoom(
++            storage.updateRoomFullLocalAccess(roomId, enabled),
++            true,
++            isGroupChatRoomOwner(storage, roomId, ctx.state?.user),
++        ),
++    }
++}
++
+ export async function updateRoomWorkspace(ctx: any) {
+     if (!chatServer) {
+         ctx.status = 503
+diff --git a/packages/server/src/modules/studio/routes/group-chat.ts b/packages/server/src/modules/studio/routes/group-chat.ts
+index 852df61..fb67358 100644
+--- a/packages/server/src/modules/studio/routes/group-chat.ts
++++ b/packages/server/src/modules/studio/routes/group-chat.ts
+@@ -84,6 +84,7 @@ groupChatRoutes.post('/api/studio/group-chat/rooms/:roomId/clear-context', ctrl.
+ groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/config', ctrl.updateRoomConfig)
+ groupChatRoutes.post('/api/studio/group-chat/rooms/:roomId/handoffs/:chainId/continue', ctrl.continueRoomHandoff)
+ groupChatRoutes.get('/api/studio/group-chat/rooms/:roomId/handoffs', ctrl.listRoomHandoffs)
++groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/full-local-access', ctrl.updateRoomFullLocalAccess)
+ groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/workspace', ctrl.updateRoomWorkspace)
+ groupChatRoutes.get('/api/studio/group-chat/rooms/:roomId/summary', ctrl.getRoomSummary)
+ groupChatRoutes.put('/api/studio/group-chat/rooms/:roomId/summary', ctrl.updateRoomSummary)
+diff --git a/packages/client/src/api/studio/group-chat.ts b/packages/client/src/api/studio/group-chat.ts
+index 91e1e77..2796cee 100644
+--- a/packages/client/src/api/studio/group-chat.ts
++++ b/packages/client/src/api/studio/group-chat.ts
+@@ -22,6 +22,7 @@ export interface RoomInfo {
+     guestAgentApproval?: 'owner'
+     maxGuestAgentsPerMember?: number
+     allowRemoteWorkspaceAccess?: number
++    fullLocalAccess?: number
+     agentHandoffEnabled?: number
+     agentHandoffMaxDepth?: number | null
+     agentHandoffUnlimited?: number
+@@ -532,6 +533,14 @@ export async function updateRoomWorkspace(roomId: string, workspace: string): Pr
+     })
+ }
+ 
++export async function updateRoomFullLocalAccess(roomId: string, enabled: boolean): Promise<{ room: RoomInfo }> {
++    return request(`/api/studio/group-chat/rooms/${roomId}/full-local-access`, {
++        method: 'PUT',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify({ enabled }),
++    })
++}
++
+ export async function getRoomSummary(roomId: string): Promise<{ summary: RoomSummaryState; anchor: RoomSummaryAnchor | null }> {
+     return request(`/api/studio/group-chat/rooms/${roomId}/summary`)
+ }
+diff --git a/packages/client/src/stores/hermes/group-chat.ts b/packages/client/src/stores/hermes/group-chat.ts
+index f06ee88..602338b 100644
+--- a/packages/client/src/stores/hermes/group-chat.ts
++++ b/packages/client/src/stores/hermes/group-chat.ts
+@@ -44,6 +44,7 @@ import {
+     clearRoomContext,
+     updateInviteCode as updateInviteCodeApi,
+     updateRoomWorkspace as updateRoomWorkspaceApi,
++    updateRoomFullLocalAccess as updateRoomFullLocalAccessApi,
+ } from '@/api/studio/group-chat'
+ import {
+     getGroupChatAttachmentUrl,
+@@ -1646,6 +1647,17 @@ export const useGroupChatStore = defineStore('groupChat', () => {
+         }
+     }
+ 
++    async function setRoomFullLocalAccess(roomId: string, enabled: boolean) {
++        try {
++            const res = await updateRoomFullLocalAccessApi(roomId, enabled)
++            if (res.room) upsertRoom(res.room)
++            return res.room
++        } catch (err: any) {
++            error.value = err.message
++            throw err
++        }
++    }
++
+     async function setRoomInviteCode(roomId: string, inviteCode: string) {
+         const nextCode = inviteCode.trim()
+         if (!nextCode) throw new Error('inviteCode is required')
+@@ -2004,6 +2016,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
+         cloneRoom,
+         clearCurrentRoomContext,
+         setRoomWorkspace,
++        setRoomFullLocalAccess,
+         setRoomInviteCode,
+         loadAgents,
+         addAgentToRoom,
+diff --git a/packages/client/src/components/hermes/group-chat/GroupChatPanel.vue b/packages/client/src/components/hermes/group-chat/GroupChatPanel.vue
+index 90ca4d2..b965cc4 100644
+--- a/packages/client/src/components/hermes/group-chat/GroupChatPanel.vue
++++ b/packages/client/src/components/hermes/group-chat/GroupChatPanel.vue
+@@ -162,6 +162,8 @@ const clarifyResponse = ref('')
+ const allowGuestAgentsDraft = ref(false)
+ const maxGuestAgentsPerMemberDraft = ref(1)
+ const allowRemoteWorkspaceAccessDraft = ref(false)
++const fullLocalAccessDraft = ref(false)
++const isSavingFullLocalAccess = ref(false)
+ const isSavingGuestAgentPolicy = ref(false)
+ let agentPairingRefreshTimer: ReturnType<typeof setInterval> | null = null
+ let remoteRoomRefreshTimer: ReturnType<typeof setInterval> | null = null
+@@ -1794,6 +1796,7 @@ async function handleOpenRoomSettings() {
+         allowGuestAgentsDraft.value = Number(room.allowGuestAgents || 0) === 1
+         maxGuestAgentsPerMemberDraft.value = Math.max(1, Number(room.maxGuestAgentsPerMember || 1))
+         allowRemoteWorkspaceAccessDraft.value = Number(room.allowRemoteWorkspaceAccess || 0) === 1
++        fullLocalAccessDraft.value = Number(room.fullLocalAccess || 0) === 1
+         summaryConfig.value = {
+             summaryProfile: room.summaryProfile || profilesStore.activeProfileName || 'default',
+             summaryProvider: room.summaryProvider || '',
+@@ -1885,6 +1888,20 @@ async function handleSaveGuestAgentPolicy(): Promise<void> {
+     }
+ }
+ 
++async function handleSaveFullLocalAccess(): Promise<void> {
++    const roomId = store.currentRoomId
++    if (!roomId || !currentRoomCanManage.value || isSavingFullLocalAccess.value) return
++    isSavingFullLocalAccess.value = true
++    try {
++        await store.setRoomFullLocalAccess(roomId, fullLocalAccessDraft.value)
++        message.success(t('groupChat.fullLocalAccessSaved'))
++    } catch (error: any) {
++        message.error(error?.message || t('groupChat.fullLocalAccessSaveFailed'))
++    } finally {
++        isSavingFullLocalAccess.value = false
++    }
++}
++
+ async function handleSaveRoomName() {
+     if (!store.currentRoomId || !canUpdateRoomName.value) return
+     isSavingRoomName.value = true
+@@ -3307,6 +3324,41 @@ function handleClarifyKeydown(event: KeyboardEvent) {
+                                 {{ t('common.save') }}
+                             </NButton>
+                         </section>
++                        <section class="settings-section">
++                            <h4>{{ t('groupChat.fullLocalAccess') }}</h4>
++                            <div class="guest-agent-policy-row">
++                                <div>
++                                    <strong>{{ t('groupChat.fullLocalAccess') }}</strong>
++                                    <p class="form-hint">{{ t('groupChat.fullLocalAccessHint') }}</p>
++                                    <p v-if="fullLocalAccessDraft" class="full-access-danger">
++                                        {{ t('groupChat.fullLocalAccessDangerHint') }}
++                                    </p>
++                                </div>
++                                <NSwitch v-model:value="fullLocalAccessDraft" />
++                            </div>
++                            <NPopconfirm
++                                v-if="fullLocalAccessDraft"
++                                :title="t('groupChat.fullLocalAccessConfirmTitle')"
++                                :positive-text="t('common.confirm')"
++                                :negative-text="t('common.cancel')"
++                                @positive-click="handleSaveFullLocalAccess"
++                            >
++                                <template #trigger>
++                                    <NButton type="primary" :loading="isSavingFullLocalAccess">
++                                        {{ t('common.save') }}
++                                    </NButton>
++                                </template>
++                                {{ t('groupChat.fullLocalAccessConfirmContent') }}
++                            </NPopconfirm>
++                            <NButton
++                                v-else
++                                type="primary"
++                                :loading="isSavingFullLocalAccess"
++                                @click="handleSaveFullLocalAccess"
++                            >
++                                {{ t('common.save') }}
++                            </NButton>
++                        </section>
+                         <section class="settings-section">
+                             <h4>{{ t('chat.setWorkspaceTitle') }}</h4>
+                             <FolderPicker v-model="workspaceValue" />
+@@ -4964,6 +5016,13 @@ export default defineComponent({ components: { CreateRoomForm } })
+     }
+ }
+ 
++.full-access-danger {
++    margin: 8px 0 0;
++    color: #d03050;
++    font-size: 12px;
++    line-height: 1.5;
++}
++
+ .agent-pairing-float-panel {
+     border-color: rgba(var(--accent-primary-rgb), 0.28);
+ }
+diff --git a/packages/client/src/i18n/locales/zh.ts b/packages/client/src/i18n/locales/zh.ts
+index 0bb9e42..ece6b1f 100644
+--- a/packages/client/src/i18n/locales/zh.ts
++++ b/packages/client/src/i18n/locales/zh.ts
+@@ -839,7 +839,7 @@ export default {
+ 
+   // 对话
+   chat: {
+-    contextRemaining: '剩余',
++    contextUnknown: '未知', contextRemaining: '剩余',
+     contextClickToEdit: '点击编辑上下文长度',
+     contextEditTitle: '编辑上下文长度',
+     contextEditDesc: '设置当前模型的上下文长度限制（token 数量）',
+@@ -1930,6 +1930,13 @@ export default {
+     staleTimeoutSeconds: '过期请求超时（秒）',
+     extraBodyHint: '可选 JSON 对象，会合并到 Provider 请求体；留空表示删除。',
+     extraBodyInvalid: 'extra_body 必须是有效的 JSON 对象。',
++    extraHeadersHint: '可选 JSON 对象：发送给 Provider 的额外请求头（值必须为字符串）；留空表示删除。',
++    extraHeadersInvalid: 'extra_headers 必须是「头名称 → 字符串值」的 JSON 对象。',
++    preserveClientIdentity: '透传官方客户端请求头',
++    preserveClientIdentityHint: '开启后，本 Provider 的 Codex 会话自动携带真实 Codex CLI 请求头，Claude Code 会话自动携带真实 Claude Code 请求头；版本号随已安装的 CLI 自动更新。',
++    providerProxyUrl: '上游代理（可选）',
++    providerProxyUrlPlaceholder: 'http://127.0.0.1:6785',
++    providerProxyUrlHint: '该 Provider 的 Codex / Claude Code 上游请求将经此代理发出；留空表示直连。仅当必须走代理才能访问该 API 时才需要填写。',
+     providerTestUnsupported: '当前 API Mode 不支持连接测试。',
+     perModelContextLengths: '逐模型上下文长度',
+     contextLengthInheritHint: '清空数值即继承 Provider 或系统默认值。',
+@@ -3262,6 +3269,13 @@ export default {
+     ownerApprovalHint: '每个 Agent 仍然必须经过群主明确批准。',
+     allowRemoteWorkspaceAccess: '允许远程 Agent 读写群聊工作区',
+     remoteWorkspaceAccessHint: '开启后，已批准的远程 Agent 会在每次运行期间获得短期访问权限；敏感文件和群聊工作区以外的路径仍会被拦截。',
++    fullLocalAccess: '本机完全访问',
++    fullLocalAccessHint: '开启后，非房主消息触发的本机群聊 Agent 不再受工作区目录限制，可读写本机全部盘符与配置路径。仅对本房间生效，仅房主可修改。',
++    fullLocalAccessDangerHint: '风险提示：开启后，本房间内任何能触发 Agent 的成员都将能驱动其读写本机文件（包括配置与凭据路径）。',
++    fullLocalAccessConfirmTitle: '确认开启“本机完全访问”？',
++    fullLocalAccessConfirmContent: '开启后，非房主成员触发的本机 Agent 将获得与本机所有者同等的文件访问权限（所有盘符与配置路径）。此设置仅对本房间生效，关闭后立即恢复工作区限制。',
++    fullLocalAccessSaved: '本机完全访问设置已保存',
++    fullLocalAccessSaveFailed: '本机完全访问设置保存失败',
+     agentPairingRequestTitle: 'Agent 接入申请',
+     agentPairingRequestDescription: '{user} 想从 {origin} 接入一个 Agent。',
+     approveAgent: '批准 Agent',
+diff --git a/packages/client/src/i18n/locales/en.ts b/packages/client/src/i18n/locales/en.ts
+index ae2459a..c3f9ce2 100644
+--- a/packages/client/src/i18n/locales/en.ts
++++ b/packages/client/src/i18n/locales/en.ts
+@@ -839,7 +839,7 @@ export default {
+ 
+   // Chat
+   chat: {
+-    contextRemaining: 'remaining',
++    contextUnknown: 'unknown', contextRemaining: 'remaining',
+     contextClickToEdit: 'Click to edit context length',
+     contextEditTitle: 'Edit Context Length',
+     contextEditDesc: 'Set context length limit for current model (in tokens)',
+@@ -1884,6 +1884,13 @@ export default {
+     staleTimeoutSeconds: 'Stale request timeout (seconds)',
+     extraBodyHint: 'Optional JSON object merged into provider requests. Leave blank to remove it.',
+     extraBodyInvalid: 'extra_body must be a valid JSON object.',
++    extraHeadersHint: 'Optional JSON object of extra HTTP headers sent to the provider. Values must be strings; leave blank to remove it.',
++    extraHeadersInvalid: 'extra_headers must be a JSON object mapping header names to string values.',
++    preserveClientIdentity: 'Forward official client headers',
++    preserveClientIdentityHint: 'When on, Codex sessions send the real Codex CLI identity headers and Claude Code sessions send the real Claude Code identity headers. Versions follow the installed CLI automatically.',
++    providerProxyUrl: 'Upstream proxy (optional)',
++    providerProxyUrlPlaceholder: 'http://127.0.0.1:6785',
++    providerProxyUrlHint: 'Codex / Claude Code upstream requests for this provider are sent through this proxy; leave empty to connect directly.',
+     providerTestUnsupported: 'Connection testing is not supported for this API mode.',
+     perModelContextLengths: 'Per-model context lengths',
+     contextLengthInheritHint: 'Clear a value to inherit the provider or system default.',
+@@ -3214,6 +3221,13 @@ export default {
+     ownerApprovalHint: 'Every Agent still requires explicit room-owner approval.',
+     allowRemoteWorkspaceAccess: 'Allow remote Agents to read and write the group workspace',
+     remoteWorkspaceAccessHint: 'When enabled, approved remote Agents receive short-lived access for each run. Sensitive files and paths outside the room workspace remain blocked.',
++    fullLocalAccess: 'Full local access',
++    fullLocalAccessHint: 'When enabled, local group-chat Agents triggered by non-owner members are no longer scoped to the room workspace and can read/write every drive and config path on this machine. Applies to this room only; owner-only setting.',
++    fullLocalAccessDangerHint: 'Risk: once enabled, any member who can trigger an Agent in this room will be able to drive it to read/write local files, including configuration and credential paths.',
++    fullLocalAccessConfirmTitle: 'Enable full local access?',
++    fullLocalAccessConfirmContent: 'Non-owner-triggered local Agents will get the same file access as the machine owner (all drives and config paths). Applies to this room only; the workspace restriction is restored immediately when disabled.',
++    fullLocalAccessSaved: 'Full local access setting saved',
++    fullLocalAccessSaveFailed: 'Failed to save full local access setting',
+     agentPairingRequestTitle: 'Agent connection request',
+     agentPairingRequestDescription: '{user} wants to connect an Agent from {origin}.',
+     approveAgent: 'Approve Agent',
+diff --git a/tests/server/group-chat-full-local-access.test.ts b/tests/server/group-chat-full-local-access.test.ts
+new file mode 100644
+index 0000000..4dc93c7
+--- /dev/null
++++ b/tests/server/group-chat-full-local-access.test.ts
+@@ -0,0 +1,131 @@
++import { describe, it, expect, vi } from 'vitest'
++
++const mockSocket = vi.hoisted(() => ({
++  id: 'agent-socket-1',
++  connected: true,
++  io: { on: vi.fn() },
++  on: vi.fn((event: string, handler: (...args: any[]) => void) => {
++    if (event === 'connect') queueMicrotask(() => handler())
++    return mockSocket
++  }),
++  emit: vi.fn((event: string, data?: any, ack?: Function) => {
++    if (event === 'message' && ack) ack({ id: data?.id || 'msg-id' })
++    return mockSocket
++  }),
++  disconnect: vi.fn(),
++}))
++
++const bridgeMock = vi.hoisted(() => ({
++  chat: vi.fn(async (_sessionId: string) => {
++    return { ok: true, run_id: 'bridge-run-id', session_id: _sessionId, status: 'running' }
++  }),
++  streamOutput: vi.fn(async function* (runId: string) {
++    yield {
++      ok: true,
++      run_id: runId,
++      session_id: 'session-1',
++      status: 'complete',
++      delta: 'done',
++      cursor: 1,
++      output: 'done',
++      done: true,
++      events: [],
++      event_cursor: 0,
++    }
++  }),
++  contextEstimate: vi.fn(),
++  interrupt: vi.fn(),
++  destroy: vi.fn(),
++}))
++
++const trackerMock = vi.hoisted(() => ({
++  startWorkspaceRunCheckpoint: vi.fn(() => {}),
++  completeWorkspaceRunCheckpointDraft: vi.fn(() => null),
++  discardWorkspaceRunCheckpoint: vi.fn(),
++}))
++
++vi.mock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }))
++vi.mock('../../packages/server/src/modules/studio/services/auth/token-auth', () => ({ getToken: vi.fn(async () => 'test-token') }))
++vi.mock('../../packages/server/src/modules/studio/public/profile-config', () => ({
++  readConfigYamlForProfile: vi.fn(async () => ({ model: { default: 'model-a', provider: 'provider-a' } })),
++}))
++vi.mock('../../packages/server/src/modules/studio/repositories/usage-store', () => ({ updateUsage: vi.fn() }))
++vi.mock('../../packages/server/src/modules/studio/public/group-chat-agent-runtime', () => ({
++  createGroupPrimaryAgentBridge: vi.fn(() => bridgeMock),
++  cancelGroupEkkoClarification: vi.fn(() => ({ resolved: false })),
++}))
++vi.mock('../../packages/server/src/modules/studio/services/chat-run/workspace-diff-tracker', () => trackerMock)
++
++describe('group chat room full local access', () => {
++  it('skips the non-owner workspace-scoped security policy when the room enables fullLocalAccess', async () => {
++    const { AgentClients } = await import('../../packages/server/src/modules/studio/services/group-chat/agent-clients')
++    const runAndWait = vi.fn(async (_data: any) => ({ ok: true, output: 'done' }))
++    const clients = new AgentClients()
++    clients.setChatRunService({ runAndWait, abortSession: vi.fn(async () => {}) })
++    const client = await clients.createAgent({
++      agentId: 'agent-full',
++      agent: 'codex',
++      profile: 'default',
++      name: 'FullAccessAgent',
++      description: 'Handles owner-granted full access runs',
++      invited: 0,
++      backgroundDelegationEnabled: false,
++    } as any)
++    const storage = {
++      getRoom: vi.fn(() => ({
++        name: 'Full Access Room',
++        workspace: '/srv/group-chat/full-room',
++        ownerAuthUserId: 42,
++        fullLocalAccess: 1,
++      })),
++      getRoomMembers: vi.fn(() => [
++        { userId: 'auth:42', name: 'Room Owner' },
++        { userId: 'member-guest', name: 'Guest' },
++      ]),
++      getRoomAgents: vi.fn(() => [{
++        id: 'room-agent-full',
++        agentId: 'agent-full',
++        name: 'FullAccessAgent',
++        executorType: 'remote',
++        ownerMemberId: 'auth:42',
++      }]),
++    }
++    ;(clients as any).rooms.set('room-full', new Map([[client.agentId, client]]))
++    clients.setStorage(storage)
++
++    await clients.processMentions('room-full', {
++      messageId: 'message-guest',
++      content: '@FullAccessAgent read the G: drive report',
++      senderName: 'Guest',
++      senderId: 'member-guest',
++      timestamp: 1,
++      role: 'user',
++      mentions: [{ type: 'agent', participantId: 'agent-full' }],
++    })
++
++    const guestInstructions = String(runAndWait.mock.calls[0]?.[0]?.instructions || '')
++    expect(guestInstructions).not.toContain('# Security context: request from a non-owner')
++
++    runAndWait.mockClear()
++    storage.getRoom.mockReturnValue({
++      name: 'Full Access Room',
++      workspace: '/srv/group-chat/full-room',
++      ownerAuthUserId: 42,
++      fullLocalAccess: 0,
++    })
++    await clients.processMentions('room-full', {
++      messageId: 'message-guest-2',
++      content: '@FullAccessAgent read the G: drive report',
++      senderName: 'Guest',
++      senderId: 'member-guest',
++      timestamp: 2,
++      role: 'user',
++      mentions: [{ type: 'agent', participantId: 'agent-full' }],
++    })
++
++    const scopedInstructions = String(runAndWait.mock.calls[0]?.[0]?.instructions || '')
++    expect(scopedInstructions).toContain('# Security context: request from a non-owner')
++    expect(scopedInstructions).toContain('"authorized_workspace": "/srv/group-chat/full-room"')
++    client.disconnect()
++  })
++})

@@ -34,8 +34,26 @@ Private repository holding the local source patches applied on top of
 
 ## 本地补丁清单
 
-补丁按顺序应用（`patches/0001` → `patches/0004`），均为 LF 行尾，不依赖
-`core.autocrlf` 设置。
+补丁按顺序应用（`patches/0001` → `patches/0009`，其中 `0008` 的内容已并入 `0007`），
+均为 LF 行尾，不依赖 `core.autocrlf` 设置。
+
+| 补丁 | 功能摘要 |
+|------|----------|
+| `0001` | `extra_headers` 与 `preserve_client_identity` 透传（provider 层） |
+| `0002` | 上述字段应用于每次 coding-agent 上游请求（代理层） |
+| `0003` | coding-agent CLI 流量走本地代理（127.0.0.1:8787） |
+| `0004` | Codex `config.toml` 生成保留 array-of-table 段与多行顶层值 |
+| `0005` | 群聊按房间的本机全量访问（fullLocalAccess，含 schema/SELECT/守卫/路由/serialize） |
+| `0006` | provider 级 `proxy_url` 出口与连接自动重试 |
+| `0007` | 按模型调用计量上下文用量及杂项漂移修复 |
+| `0009` | 品牌保留：dist 层恢复 Hermes Studio 名称与图标（约 20.8MB，含二进制图标） |
+
+- 目标版本：`0.7.26`（tag `v0.7.26`，commit `200f0eec`），升级分支 `local/0.7.26-patches`。
+- 升级前基线快照：`local/0.7.18-patches`。
+- fork 地址：<https://github.com/x1051445024/ekko-studio>（`EKKOLearnAI/ekko-studio` 的真 fork）。
+- 本次升级记录见 `Pictures/Hermes/hermes-studio/records/20261001-升级0.7.26记录.md`。
+
+### 1. `extra_headers` 与 `preserve_client_identity` 透传（provider 层）
 
 ### 1. `extra_headers` 与 `preserve_client_identity` 透传（provider 层）
 
