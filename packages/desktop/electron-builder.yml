@@ -7,8 +7,9 @@ directories:
   buildResources: build
 
 publish:
-  provider: generic
-  url: https://download.ekkolearnai.com
+  provider: github
+  owner: x1051445024
+  repo: hermes-studio
 
 # Don't auto-prune our root node_modules; we curate `files` and `extraResources` ourselves.
 buildDependenciesFromSource: false
@@ -69,6 +70,8 @@ extraResources:
       - "!node-pty/build/**"
       - "node-pty/build/Release/pty.node"
       - "!**/*.md"
+      - "!**/*.map"
+      - "!**/*.pdb"
 
 asarUnpack:
   - "**/*.node"

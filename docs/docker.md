@@ -7,7 +7,7 @@ This repository ships an environment-variable driven Docker Compose setup.
 ### Pull pre-built image (Recommended)
 
 ```bash
-WEBUI_IMAGE=ekkoye8888/hermes-web-ui docker compose up -d
+WEBUI_IMAGE=${DOCKERHUB_USERNAME}/hermes-studio docker compose up -d
 docker compose logs -f hermes-webui
 ```
 
@@ -42,7 +42,7 @@ All key runtime settings are configured from compose variables.
 | `HERMES_APP_ENTITLEMENT_PUBLIC_KEY` | built in | Optional PEM public-key override for App entitlement verification. |
 | `HERMES_BIN` | `/opt/hermes/.venv/bin/hermes` | Path to Hermes CLI binary |
 | `HERMES_AGENT_IMAGE` | `nousresearch/hermes-agent:latest` | Hermes Agent base image (used only during build) |
-| `WEBUI_IMAGE` | `hermes-web-ui-local:latest` | Web UI image (set to `ekkoye8888/hermes-web-ui` to use pre-built) |
+| `WEBUI_IMAGE` | `hermes-studio-local:latest` | Hermes Studio image (set to `${DOCKERHUB_USERNAME}/hermes-studio` to use a pre-built image) |
 | `HERMES_DATA_DIR` | `./hermes_data` | Hermes runtime data directory |
 
 Override variables directly from shell:
@@ -54,7 +54,7 @@ PORT=16060 docker compose up -d
 Or create a `.env` file in the project root:
 
 ```
-WEBUI_IMAGE=ekkoye8888/hermes-web-ui
+WEBUI_IMAGE=${DOCKERHUB_USERNAME}/hermes-studio
 PORT=6060
 ```
 

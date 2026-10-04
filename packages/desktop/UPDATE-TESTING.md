@@ -4,12 +4,12 @@
 
 ## 1. 一次性配置上传权限
 
-测试仓库已经提供 HTTPS 文件下载，无需搭建服务器或填写更新链接。GitHub 默认 `GITHUB_TOKEN` 只授权当前仓库，因此跨仓库上传需在**源仓库** `EKKOLearnAI/ekko-studio` 配置专用 Actions secret：
+测试仓库已经提供 HTTPS 文件下载，无需搭建服务器或填写更新链接。GitHub 默认 `GITHUB_TOKEN` 只授权当前仓库，因此跨仓库上传需在**源仓库** `x1051445024/hermes-studio` 配置专用 Actions secret：
 
 1. 在 [GitHub fine-grained tokens](https://github.com/settings/personal-access-tokens/new) 创建 token，设置合适的过期时间。
 2. Resource owner 选择 `EKKOLearnAI`，Repository access 选择 **Only select repositories**，只勾选 `ekko-studio-update-test`。
 3. Repository permissions 中设置 **Contents: Read and write**；Metadata 自动为只读。不需要给源仓库写权限。
-4. 打开 [源仓库 Actions secrets](https://github.com/EKKOLearnAI/ekko-studio/settings/secrets/actions/new)，Name 填 `DESKTOP_UPDATE_TEST_TOKEN`，Secret 填新 token。不要把 token 写进代码、日志或聊天。
+4. 打开 [源仓库 Actions secrets](https://github.com/x1051445024/hermes-studio/settings/secrets/actions/new)，Name 填 `DESKTOP_UPDATE_TEST_TOKEN`，Secret 填新 token。不要把 token 写进代码、日志或聊天。
 
 工作流只在上传预检和上传步骤注入此 token，内置 token 保持 `contents: read`。缺少 secret 会在构建 Web UI/签名安装包之前失败。预检验证认证和仓库可访问性，真正的写权限由上传操作验证；过期或权限不足时修复 secret 后重试。
 
@@ -60,8 +60,8 @@ Linux 两种架构均使用 AppImage 验证应用内更新，分别使用原生 
 Linux 请将 AppImage 放在当前用户有写权限的目录，并以普通用户从 AppImage 启动，例如 x64：
 
 ```sh
-chmod +x Ekko.Studio-0.7.900-x86_64.AppImage
-./Ekko.Studio-0.7.900-x86_64.AppImage
+chmod +x Hermes.Studio-0.7.900-x86_64.AppImage
+./Hermes.Studio-0.7.900-x86_64.AppImage
 ```
 
 x64 的文件名使用 `x86_64`，arm64 使用 `arm64`。需要安装发行版提供的 FUSE 2 兼容库时，按系统提示安装（Ubuntu 22.04 为 `libfuse2`）。AppImage 启动器会设置更新器所需的 `APPIMAGE` 环境变量；直接运行解压后的程序或改用 DEB 不属于这个测试链路。AppImage 更新会替换原文件，文件名带版本时可能变成 B 的文件名；检查重启后的版本和桌面快捷方式仍能正确启动。下载完成后的“稍后”、普通退出和“重启更新”均需在测试机验证。

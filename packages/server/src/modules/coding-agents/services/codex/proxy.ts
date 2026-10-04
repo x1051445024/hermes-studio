@@ -1,6 +1,5 @@
 import { Readable } from 'stream'
 import type { Context } from 'koa'
-import { config } from '../../../studio/public/config'
 import {
   anthropicMessagesUrl as resolveAnthropicMessagesUrl,
   chatCompletionsUrl as resolveChatCompletionsUrl,
@@ -25,6 +24,7 @@ import {
   type CanonicalResponsesEvent,
 } from '../../protocol/adapters/responses-stream'
 import { agentRunGateway } from '../../protocol/gateway'
+import { proxyTargetBaseUrl, type CodingAgentProxyTargetOptions } from '../../protocol/local-proxy'
 import { codingAgentRunManager } from '../runtime/run-manager'
 
 export interface CodexProxyTargetInput extends AgentTargetInput {
@@ -43,33 +43,33 @@ const targetRegistry = new AgentTargetRegistry<CodexProxyTargetInput>(
   ],
 )
 
-function localProxyBaseUrl(routeKey: string): string {
-  // Local customization: route Codex-through-Studio traffic via the local
-  // Headroom proxy on 127.0.0.1:8787 (which forwards it back to this Studio
-  // server) so coding-agent payloads get Headroom's compression/memory pass.
-  // Matches the previously patched dist behavior.
-  return `http://127.0.0.1:8787/api/codex-proxy/${routeKey}/v1`
+function proxyBaseUrl(routeKey: string, options: CodingAgentProxyTargetOptions = {}): string {
+  return proxyTargetBaseUrl(`/api/codex-proxy/${routeKey}/v1`, options)
 }
 
-export function registerCodexProxyTarget(input: CodexProxyTargetInput): { baseUrl: string; token: string; routeKey: string } {
+export function registerCodexProxyTarget(
+  input: CodexProxyTargetInput,
+  options: CodingAgentProxyTargetOptions = {},
+): { baseUrl: string; token: string; routeKey: string } {
   const target = targetRegistry.register({
     ...input,
     profile: input.profile.trim(),
   })
 
-  return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
+  return { baseUrl: proxyBaseUrl(target.routeKey, options), token: target.token, routeKey: target.routeKey }
 }
 
 export function restoreCodexProxyTarget(
   input: CodexProxyTargetInput,
   token: string,
+  options: CodingAgentProxyTargetOptions = {},
 ): { baseUrl: string; token: string; routeKey: string } {
   const target = targetRegistry.register({
     ...input,
     profile: input.profile.trim(),
   }, { token })
 
-  return { baseUrl: localProxyBaseUrl(target.routeKey), token: target.token, routeKey: target.routeKey }
+  return { baseUrl: proxyBaseUrl(target.routeKey, options), token: target.token, routeKey: target.routeKey }
 }
 
 export function revokeCodexProxyTargets(profile: string, provider: string): number {
@@ -215,9 +215,9 @@ async function callOpenAiChat(target: CodexProxyTarget, body: any, ctx: Context)
   return agentRunGateway.completeJson({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
-    proxyUrl: target.proxyUrl,
     sessionId: target.chatSessionId || target.agentSessionId || target.routeKey,
     provider: target.provider,
+    proxyUrl: target.proxyUrl,
     headers: upstreamRequestHeaders(target, ctx),
     body: chatBody,
   })
@@ -233,9 +233,9 @@ async function callAnthropicMessages(target: CodexProxyTarget, body: any, ctx: C
   return agentRunGateway.completeJson({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
-    proxyUrl: target.proxyUrl,
     sessionId: target.chatSessionId || target.agentSessionId || target.routeKey,
     provider: target.provider,
+    proxyUrl: target.proxyUrl,
     headers: {
       ...(target.apiKey ? { 'x-api-key': target.apiKey } : {}),
       'anthropic-version': '2023-06-01',
@@ -255,9 +255,9 @@ async function callOpenAiResponses(target: CodexProxyTarget, body: any, ctx: Con
   return agentRunGateway.completeJson({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
-    proxyUrl: target.proxyUrl,
     sessionId: target.chatSessionId || target.agentSessionId || target.routeKey,
     provider: target.provider,
+    proxyUrl: target.proxyUrl,
     headers: upstreamRequestHeaders(target, ctx),
     body: responsesBody,
   })
@@ -337,9 +337,9 @@ async function openAiChatToResponsesSseStream(target: CodexProxyTarget, body: an
   const stream = await agentRunGateway.streamBytes({
     url: chatCompletionsUrl(target),
     apiKey: target.apiKey,
-    proxyUrl: target.proxyUrl,
     sessionId: target.chatSessionId || target.agentSessionId || target.routeKey,
     provider: target.provider,
+    proxyUrl: target.proxyUrl,
     headers: upstreamRequestHeaders(target, ctx),
     body: chatBody,
   })
@@ -360,9 +360,9 @@ async function anthropicMessagesToResponsesSseStream(target: CodexProxyTarget, b
   const stream = await agentRunGateway.streamBytes({
     url: anthropicMessagesUrl(target),
     apiKey: target.apiKey,
-    proxyUrl: target.proxyUrl,
     sessionId: target.chatSessionId || target.agentSessionId || target.routeKey,
     provider: target.provider,
+    proxyUrl: target.proxyUrl,
     headers: {
       ...(target.apiKey ? { 'x-api-key': target.apiKey } : {}),
       'anthropic-version': '2023-06-01',
@@ -387,9 +387,9 @@ async function openAiResponsesSseStream(target: CodexProxyTarget, body: any, ctx
   const stream = await agentRunGateway.streamBytes({
     url: resolveResponsesUrl(target.baseUrl),
     apiKey: target.apiKey,
-    proxyUrl: target.proxyUrl,
     sessionId: target.chatSessionId || target.agentSessionId || target.routeKey,
     provider: target.provider,
+    proxyUrl: target.proxyUrl,
     headers: upstreamRequestHeaders(target, ctx),
     body: responsesBody,
   })

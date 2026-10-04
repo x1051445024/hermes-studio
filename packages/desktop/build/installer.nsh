@@ -1,8 +1,12 @@
 !macro stopStudioExecutable EXE_NAME LABEL
   IfFileExists "$INSTDIR\${EXE_NAME}" 0 studioStopDone_${LABEL}
     DetailPrint "Stopping Hermes Studio..."
-    nsExec::ExecToLog '"$INSTDIR\${EXE_NAME}" --quit'
+
+    ; Only terminate an already-running process. Never launch the installed
+    ; executable while preparing an upgrade.
+    nsExec::ExecToLog 'taskkill.exe /IM "${EXE_NAME}" /T /F'
     Pop $0
+    Goto studioStopDone_${LABEL}
 
     InitPluginsDir
     FileOpen $0 "$PLUGINSDIR\stop-hermes-studio.ps1" w
@@ -106,7 +110,7 @@
 
 !macro stopHermesStudioProcesses
   ; Close either installed product name when upgrading across the rename.
-  !insertmacro stopStudioExecutable "Hermes Studio.exe" ekko
+  !insertmacro stopStudioExecutable "Ekko Studio.exe" ekko
   !insertmacro stopStudioExecutable "Hermes Studio.exe" hermes
 !macroend
 
@@ -137,6 +141,59 @@
 !macro customInit
   !insertmacro stopHermesStudioProcesses
   !insertmacro repairHermesStudioUninstaller
+!macroend
+
+!macro customInstall
+  ; Validate the two files that make an installation usable. A prior build
+  ; reported success while leaving the main executable absent and the
+  ; uninstaller empty, so repair from the extracted payload before failing.
+  IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" hermesStudioInstallExePresent hermesStudioInstallExeRepair
+
+  hermesStudioInstallExeRepair:
+    IfFileExists "$PLUGINSDIR\7z-out\${APP_EXECUTABLE_FILENAME}" 0 hermesStudioInstallFailed
+    DetailPrint "Restoring missing Hermes Studio executable..."
+    ClearErrors
+    CopyFiles /SILENT "$PLUGINSDIR\7z-out\${APP_EXECUTABLE_FILENAME}" "$INSTDIR"
+    IfErrors hermesStudioInstallFailed
+    IfFileExists "$INSTDIR\${APP_EXECUTABLE_FILENAME}" hermesStudioInstallExePresent hermesStudioInstallFailed
+
+  hermesStudioInstallExePresent:
+    ClearErrors
+    FileOpen $0 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" r
+    IfErrors hermesStudioInstallFailed
+    FileReadByte $0 $1
+    IfErrors hermesStudioInstallExeCloseFailed
+    FileClose $0
+    Goto hermesStudioInstallExeValidated
+
+  hermesStudioInstallExeCloseFailed:
+    FileClose $0
+    Goto hermesStudioInstallFailed
+
+  hermesStudioInstallExeValidated:
+    IfFileExists "$INSTDIR\${UNINSTALL_FILENAME}" hermesStudioInstallUninstallerPresent hermesStudioInstallFailed
+
+  hermesStudioInstallUninstallerPresent:
+    ClearErrors
+    FileOpen $0 "$INSTDIR\${UNINSTALL_FILENAME}" r
+    IfErrors hermesStudioInstallFailed
+    FileReadByte $0 $1
+    IfErrors hermesStudioInstallUninstallerCloseFailed
+    FileClose $0
+    Goto hermesStudioInstallValidated
+
+  hermesStudioInstallUninstallerCloseFailed:
+    FileClose $0
+    Goto hermesStudioInstallFailed
+
+  hermesStudioInstallValidated:
+    Goto hermesStudioInstallDone
+
+  hermesStudioInstallFailed:
+    MessageBox MB_OK|MB_ICONSTOP "Hermes Studio installation did not produce a usable application. The installation was stopped; existing user data was not removed."
+    Quit
+
+  hermesStudioInstallDone:
 !macroend
 
 !macro customCheckAppRunning

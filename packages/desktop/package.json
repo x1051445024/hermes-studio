@@ -1,10 +1,10 @@
 {
   "name": "hermes-studio",
   "version": "0.7.26",
-  "description": "Ekko Studio desktop app for multi-agent chat, coding, and visual workflows, with bundled local runtimes.",
-  "homepage": "https://ekkostudio.xyz",
+  "description": "Hermes Studio desktop app for multi-agent chat, coding, and visual workflows, with bundled local runtimes.",
+  "homepage": "https://github.com/x1051445024/hermes-studio",
   "author": {
-    "name": "Ekko Studio Contributors",
+    "name": "Hermes Studio Contributors",
     "email": "noreply@hermes-studio.local"
   },
   "license": "BSL-1.1",

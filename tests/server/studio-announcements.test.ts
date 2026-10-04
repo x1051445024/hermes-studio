@@ -10,7 +10,7 @@ describe('Studio announcement delivery', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(data)))
     vi.stubGlobal('fetch', fetchMock)
     expect(await fetchStudioAnnouncements(input)).toEqual(data)
-    expect(fetchMock).toHaveBeenCalledWith(`https://api.ekkostudio.xyz/api/studio/announcements?locale=${expectedLocale}`, {
+    expect(fetchMock).toHaveBeenCalledWith(`https://raw.githubusercontent.com/x1051445024/hermes-studio/main/docs/studio/announcements.json?locale=${expectedLocale}`, {
       headers: { Accept: 'application/json' }, signal: expect.any(AbortSignal),
     })
   })

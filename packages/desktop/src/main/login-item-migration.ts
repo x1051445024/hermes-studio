@@ -10,9 +10,9 @@ export function migrateWindowsLoginItem(
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (platform !== 'win32' || !app.isPackaged) return false
-  if (win32.basename(executablePath).toLowerCase() !== 'ekko studio.exe') return false
+  if (win32.basename(executablePath).toLowerCase() !== 'hermes studio.exe') return false
 
-  const legacyPath = win32.join(win32.dirname(executablePath), 'Hermes Studio.exe')
+  const legacyPath = win32.join(win32.dirname(executablePath), 'Ekko Studio.exe')
   const args = ['--hidden']
   const settings = app.getLoginItemSettings({ path: legacyPath, args })
   const legacyItem = settings.launchItems?.find(item => (

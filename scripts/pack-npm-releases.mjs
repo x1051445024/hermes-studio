@@ -21,7 +21,7 @@ function defaultNpmCli() {
 export function packNpmReleases(rootDir, outputDir, npmCli = defaultNpmCli()) {
   if (!npmCli) throw new Error('Run this script with npm run pack:npm -- <output-directory>')
   const pkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'))
-  if (pkg.name !== 'ekko-studio' || pkg.private) throw new Error('Expected the public ekko-studio source package')
+  if (pkg.name !== 'hermes-studio' || pkg.private) throw new Error('Expected the public hermes-studio source package')
   const required = ['package.json', 'LICENSE', 'dist/client/index.html', 'dist/server/index.js',
     ...Object.values(pkg.bin).map(path => path.replace(/^\.\//, ''))]
   for (const file of required) {
@@ -31,7 +31,7 @@ export function packNpmReleases(rootDir, outputDir, npmCli = defaultNpmCli()) {
   const stagingRoot = mkdtempSync(join(tmpdir(), 'ekko-npm-releases-'))
   try {
     const packages = []
-    for (const name of ['ekko-studio', 'hermes-web-ui']) {
+    for (const name of ['hermes-studio', 'hermes-web-ui']) {
       const staging = join(stagingRoot, name)
       mkdirSync(staging)
       for (const path of ['bin', 'dist', 'README.md', 'LICENSE']) {

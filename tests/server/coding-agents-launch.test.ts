@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { createCipheriv, randomBytes } from 'crypto'
 import { tmpdir } from 'os'
+import { createServer } from 'net'
 import { dirname, join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseToml } from 'smol-toml'
@@ -32,6 +33,7 @@ import {
 } from '../../packages/server/src/modules/coding-agents/services/pi/thinking'
 import { codingAgentRunManager } from '../../packages/server/src/modules/coding-agents/services/runtime/run-manager'
 import { configureProfileConfig } from '../../packages/server/src/modules/studio/public/profile-config'
+import { shouldUseLocalCodingAgentProxy } from '../../packages/server/src/modules/coding-agents/protocol/local-proxy'
 import * as providerRuntime from '../../packages/server/src/modules/studio/public/provider-runtime'
 import { upsertCodingAgentMcpServer } from '../../packages/server/src/modules/coding-agents/services/mcp-manager'
 import { getCodingAgentManagedMcpServerConfigs } from '../../packages/server/src/modules/coding-agents/services'
@@ -129,8 +131,43 @@ function makeHome(compression?: Record<string, unknown>) {
   return home
 }
 
+async function listenOnPort(port: number): Promise<ReturnType<typeof createServer>> {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.removeListener('listening', onListening)
+      reject(error)
+    }
+    const onListening = () => {
+      server.removeListener('error', onError)
+      resolve()
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(port, '127.0.0.1')
+  })
+  return server
+}
+
+async function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve())
+  })
+}
+
+async function listenOnEphemeralPort(): Promise<{ server: ReturnType<typeof createServer>; port: number }> {
+  const server = await listenOnPort(0)
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    await closeServer(server)
+    throw new Error('Failed to obtain ephemeral proxy test port')
+  }
+  return { server, port: address.port }
+}
+
 beforeEach(() => {
   mockProcessUid(1000)
+  process.env.HERMES_CODING_AGENT_LOCAL_PROXY = 'true'
 })
 
 it.each(['claude-code', 'codex', 'pi', 'grok', 'opencode', 'dsh'])('binds %s managed MCP transports to independent group credentials in scoped and global mode', async agent => {
@@ -219,6 +256,8 @@ afterEach(() => {
   delete process.env.HERMES_CODING_AGENT_GLOBAL_HOME
   delete process.env.CODEX_HOME
   delete process.env.HERMES_AGENT_NODE
+  delete process.env.HERMES_CODING_AGENT_LOCAL_PROXY
+  delete process.env.HERMES_CODING_AGENT_LOCAL_PROXY_URL
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true })
@@ -1481,7 +1520,7 @@ describe('coding agent launch preparation', () => {
     expect(readFileSync(join(rootDir, 'auth.json'), 'utf8')).toBe('{"token":"user-token"}\n')
     const prompt = readFileSync(join(rootDir, 'AGENTS.md'), 'utf8')
     expect(prompt).toContain('User global Codex instructions.')
-    expect(prompt).toContain('Ekko Studio MCP usage')
+    expect(prompt).toContain('Hermes Studio MCP usage')
     expect(readFileSync(join(globalCodexHome, 'config.toml'), 'utf8')).toBe('model = "gpt-global"\n')
     expect(readFileSync(join(globalCodexHome, 'auth.json'), 'utf8')).toBe('{"token":"user-token"}\n')
     expect(readFileSync(join(globalCodexHome, 'AGENTS.md'), 'utf8')).toBe('User global Codex instructions.\n')
@@ -1716,7 +1755,7 @@ describe('coding agent launch preparation', () => {
       promptFile: promptPath,
     })
     expect(rootDir).toContain(join('coding-agent', 'model', 'default', 'global', 'pi', 'runs'))
-    expect(readFileSync(promptPath, 'utf8')).toContain('Ekko Studio MCP usage')
+    expect(readFileSync(promptPath, 'utf8')).toContain('Hermes Studio MCP usage')
     expect(existsSync(join(home, 'global-home', '.pi', 'agent', 'APPEND_SYSTEM.md'))).toBe(false)
   })
 
@@ -2321,6 +2360,113 @@ describe('coding agent launch preparation', () => {
     expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'openrouter', 'claude-code'))
   })
 
+  it('uses the direct Studio proxy route when the optional local proxy is unreachable', async () => {
+    const home = makeHome()
+    delete process.env.HERMES_CODING_AGENT_LOCAL_PROXY
+    process.env.HERMES_CODING_AGENT_LOCAL_PROXY_URL = 'http://127.0.0.1:1'
+
+    await expect(shouldUseLocalCodingAgentProxy()).resolves.toBe(false)
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'direct-test',
+      model: 'direct-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-direct-test',
+      apiMode: 'codex_responses',
+    })
+
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(config).toContain('base_url = "http://127.0.0.1:8648/api/codex-proxy/')
+    expect(config).not.toContain('127.0.0.1:8787')
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'direct-test', 'codex'))
+  })
+
+  it('uses the direct Studio proxy route on a fresh install with no local proxy settings', async () => {
+    const home = makeHome()
+    delete process.env.HERMES_CODING_AGENT_LOCAL_PROXY
+    delete process.env.HERMES_CODING_AGENT_LOCAL_PROXY_URL
+
+    await expect(shouldUseLocalCodingAgentProxy()).resolves.toBe(false)
+    const result = await prepareCodingAgentLaunch('codex', {
+      profile: 'default',
+      provider: 'fresh-install-test',
+      model: 'fresh-install-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-fresh-install-test',
+      apiMode: 'codex_responses',
+    })
+
+    const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+    expect(config).toContain('base_url = "http://127.0.0.1:8648/api/codex-proxy/')
+    expect(config).not.toContain('127.0.0.1:8787')
+    expect(result.rootDir).toBe(join(home, 'coding-agent', 'model', 'default', 'fresh-install-test', 'codex'))
+  })
+
+  it('uses the local proxy when port 8787 is reachable', async () => {
+    const home = makeHome()
+    const { server, port } = await listenOnEphemeralPort()
+    process.env.HERMES_CODING_AGENT_LOCAL_PROXY_URL = `http://127.0.0.1:${port}`
+    try {
+      await expect(shouldUseLocalCodingAgentProxy()).resolves.toBe(true)
+      const result = await prepareCodingAgentLaunch('codex', {
+        profile: 'default',
+        provider: 'reachable-test',
+        model: 'reachable-model',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'sk-reachable-test',
+        apiMode: 'codex_responses',
+      })
+
+      const config = readFileSync(join(result.rootDir, 'config.toml'), 'utf-8')
+      expect(config).toContain(`base_url = "http://127.0.0.1:${port}/api/codex-proxy/`)
+      expect(config).not.toContain('base_url = "http://127.0.0.1:8648/api/codex-proxy/')
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('lets an explicit disable switch override a reachable local proxy', async () => {
+    makeHome()
+    const { server, port } = await listenOnEphemeralPort()
+    try {
+      process.env.HERMES_CODING_AGENT_LOCAL_PROXY_URL = `http://127.0.0.1:${port}`
+      process.env.HERMES_CODING_AGENT_LOCAL_PROXY = 'false'
+      await expect(shouldUseLocalCodingAgentProxy()).resolves.toBe(false)
+      const result = await prepareCodingAgentLaunch('claude-code', {
+        profile: 'default',
+        provider: 'disabled-test',
+        model: 'disabled-model',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'sk-disabled-test',
+        apiMode: 'anthropic_messages',
+      })
+
+      const settings = JSON.parse(readFileSync(join(result.rootDir, 'settings.json'), 'utf-8'))
+      expect(settings.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:8648\/api\/claude-code-proxy\//)
+      expect(settings.env.ANTHROPIC_BASE_URL).not.toContain('127.0.0.1:8787')
+    } finally {
+      await closeServer(server)
+    }
+  })
+
+  it('lets an explicit enable switch select the local proxy without probing', async () => {
+    const home = makeHome()
+    process.env.HERMES_CODING_AGENT_LOCAL_PROXY = 'true'
+    const result = await prepareCodingAgentLaunch('dsh', {
+      profile: 'default',
+      provider: 'enabled-test',
+      model: 'enabled-model',
+      baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-enabled-test',
+      apiMode: 'codex_responses',
+    })
+
+    const overlay = readFileSync(join(result.rootDir, 'studio.patch.yml'), 'utf-8')
+    expect(overlay).toContain('127.0.0.1:8787/api/codex-proxy/')
+    expect(overlay).not.toContain('127.0.0.1:8648/api/codex-proxy/')
+    expect(result.rootDir).toContain(join(home, 'coding-agent', 'model', 'default', 'enabled-test', 'dsh', 'runs'))
+  })
+
   it('keeps Claude Code protocol overrides behind the local proxy', async () => {
     const home = makeHome()
 
@@ -2437,7 +2583,7 @@ describe('coding agent launch preparation', () => {
     expect(config).toContain(`model_catalog_json = ${JSON.stringify(join(result.rootDir, 'codex-model-catalog.json'))}`)
     expect(config).toContain('model_reasoning_summary = "auto"')
     expect(config).toContain('developer_instructions = """')
-    expect(config).toContain('Ekko Studio MCP usage')
+    expect(config).toContain('Hermes Studio MCP usage')
     expect(config).toContain('ekko_studio_browser_toolset is available')
     expect(config).toContain('call it with action=list')
     expect(config).toContain('Browser MCP exposes a compact toolset rather than resources')
@@ -2463,7 +2609,7 @@ describe('coding agent launch preparation', () => {
 
     expect(result.files.some(file => file.key === 'agents')).toBe(true)
     const agents = readFileSync(join(result.rootDir, 'AGENTS.md'), 'utf-8')
-    expect(agents).toContain('Ekko Studio MCP usage')
+    expect(agents).toContain('Hermes Studio MCP usage')
     expect(agents).toContain('# 输出格式规范')
 
     const catalog = JSON.parse(readFileSync(join(result.rootDir, 'codex-model-catalog.json'), 'utf-8'))

@@ -6,7 +6,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -72,6 +71,11 @@ function executableForShim(options: Required<Pick<CliShimInstallOptions, 'env' |
 }
 
 export function shimPathForPlatform(binDir: string, platform: NodeJS.Platform = process.platform): string {
+  return join(binDir, platform === 'win32' ? 'hermes-studio.cmd' : 'hermes-studio')
+}
+
+/** The Ekko-branded command name, still written as a compatibility alias. */
+export function aliasShimPathForPlatform(binDir: string, platform: NodeJS.Platform = process.platform): string {
   return join(binDir, platform === 'win32' ? 'ekko-studio.cmd' : 'ekko-studio')
 }
 
@@ -107,7 +111,7 @@ function windowsCliForwarder(runtimePlatform: string, runtimeVersion: string): s
     "let python=path.join(virtualEnv,'Scripts','python.exe')",
     "if(!fs.existsSync(python))python=path.join(virtualEnv,'python.exe')",
     "if(!fs.existsSync(python)){virtualEnv=path.join(runtime,'python');python=path.join(virtualEnv,'python.exe')}",
-    "if(!fs.existsSync(python)){console.error('Hermes Studio Python runtime not found at '+python);console.error('Open Hermes Studio once to finish runtime setup, then retry ekko-studio cli.');process.exit(127)}",
+    "if(!fs.existsSync(python)){console.error('Hermes Studio Python runtime not found at '+python);console.error('Open Hermes Studio once to finish runtime setup, then retry hermes-studio cli.');process.exit(127)}",
     "const inheritedPath=process.env.PATH||process.env.Path||''",
     'const env={...process.env,VIRTUAL_ENV:virtualEnv,UV_PROJECT_ENVIRONMENT:virtualEnv,UV_PYTHON:python,HERMES_AGENT_ROOT:path.join(runtime,\'python\'),HERMES_AGENT_NODE:path.join(runtime,\'node\',\'node.exe\'),HERMES_AGENT_NODE_ROOT:path.join(runtime,\'node\'),AGENT_BROWSER_HOME:path.join(runtime,\'python\',\'agent-browser\'),PLAYWRIGHT_BROWSERS_PATH:path.join(runtime,\'python\',\'ms-playwright\')}',
     "for(const key of Object.keys(env))if(key.toLowerCase()==='path')delete env[key]",
@@ -126,11 +130,11 @@ function powershellUtf8Value(value: string): string {
   return `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${utf8Base64(value)}'))`
 }
 
-function windowsPowerShellSidecarName(name: 'ekko-studio' | 'ekko-studio-mcp'): string {
+function windowsPowerShellSidecarName(name: 'hermes-studio' | 'ekko-studio' | 'ekko-studio-mcp'): string {
   return `${name}.ps1`
 }
 
-function windowsCmdShimContent(name: 'ekko-studio' | 'ekko-studio-mcp', marker: string): string {
+function windowsCmdShimContent(name: 'hermes-studio' | 'ekko-studio' | 'ekko-studio-mcp', marker: string): string {
   return [
     '@echo off',
     `rem ${marker}`,
@@ -161,7 +165,7 @@ export function createPowerShellShimContent(
     '  $ForwardArgs = [string[]]$CommandArgs[1..($CommandArgs.Count - 1)]',
     '}',
     'function Show-HermesStudioHelp {',
-    "  [Console]::Out.WriteLine('Usage: ekko-studio [command] [options]')",
+    "  [Console]::Out.WriteLine('Usage: hermes-studio [command] [options]')",
     "  [Console]::Out.WriteLine('')",
     "  [Console]::Out.WriteLine('Commands:')",
     "  [Console]::Out.WriteLine('  (no command)       Open Hermes Studio desktop app')",
@@ -184,7 +188,7 @@ export function createPowerShellShimContent(
     "  'cli' {",
     '    if (!(Test-Path -LiteralPath $Node -PathType Leaf)) {',
     "      [Console]::Error.WriteLine('Hermes Studio Node runtime not found at ' + $Node)",
-    "      [Console]::Error.WriteLine('Open Hermes Studio once to finish runtime setup, then retry ekko-studio cli.')",
+    "      [Console]::Error.WriteLine('Open Hermes Studio once to finish runtime setup, then retry hermes-studio cli.')",
     '      exit 127',
     '    }',
     '    & $Node -e $CliForwarder @ForwardArgs',
@@ -193,7 +197,7 @@ export function createPowerShellShimContent(
     "  'web' {",
     '    if (!(Test-Path -LiteralPath $Node -PathType Leaf)) {',
     "      [Console]::Error.WriteLine('Hermes Studio Node runtime not found at ' + $Node)",
-    "      [Console]::Error.WriteLine('Open Hermes Studio once to finish runtime setup, then retry ekko-studio web.')",
+    "      [Console]::Error.WriteLine('Open Hermes Studio once to finish runtime setup, then retry hermes-studio web.')",
     '      exit 127',
     '    }',
     '    if (!(Test-Path -LiteralPath $WebUiScript -PathType Leaf)) {',
@@ -205,7 +209,7 @@ export function createPowerShellShimContent(
     '  }',
     '  default {',
     "    [Console]::Error.WriteLine('Unknown Hermes Studio command: ' + $Command)",
-    "    [Console]::Error.WriteLine('Run ekko-studio --help for usage.')",
+    "    [Console]::Error.WriteLine('Run hermes-studio --help for usage.')",
     '    exit 2',
     '  }',
     '}',
@@ -222,7 +226,7 @@ export function createShimContent(
   webUiScriptPath = resolve(process.cwd(), 'bin', 'hermes-web-ui.mjs'),
 ): string {
   if (platform === 'win32') {
-    return windowsCmdShimContent('ekko-studio', SHIM_MARKER)
+    return windowsCmdShimContent('hermes-studio', SHIM_MARKER)
   }
 
   return [
@@ -233,7 +237,7 @@ export function createShimContent(
     `WEBUI_SCRIPT=${shellQuote(webUiScriptPath)}`,
     'show_help() {',
     '  cat <<\'EOF\'',
-    'Usage: ekko-studio [command] [options]',
+    'Usage: hermes-studio [command] [options]',
     '',
     'Commands:',
     '  (no command)       Open Hermes Studio desktop app',
@@ -259,7 +263,7 @@ export function createShimContent(
     '    shift',
     '    if [ ! -x "$NODE" ]; then',
     '      echo "Hermes Studio Node runtime not found at $NODE" >&2',
-    '      echo "Open Hermes Studio once to finish runtime setup, then retry ekko-studio web." >&2',
+    '      echo "Open Hermes Studio once to finish runtime setup, then retry hermes-studio web." >&2',
     '      exit 127',
     '    fi',
     '    if [ ! -f "$WEBUI_SCRIPT" ]; then',
@@ -274,7 +278,7 @@ export function createShimContent(
     '    ;;',
     '  *)',
     '    echo "Unknown Hermes Studio command: $1" >&2',
-    '    echo "Run ekko-studio --help for usage." >&2',
+    '    echo "Run hermes-studio --help for usage." >&2',
     '    exit 2',
     '    ;;',
     'esac',
@@ -542,15 +546,25 @@ export async function installHermesStudioCliShim(options: CliShimInstallOptions 
         SHIM_MARKER,
       )
     : writeShim(shimPath, commandContent, platform)
+  // The Ekko-branded command name is still written as an alias so shortcuts,
+  // scripts and docs that predate the rename keep working.
+  const aliasShimPath = aliasShimPathForPlatform(binDir, platform)
   if (status !== 'skipped') {
-    const oldPaths = platform === 'win32'
-      ? [join(binDir, 'hermes-studio.cmd'), join(binDir, 'hermes-studio.ps1')]
-      : [join(binDir, 'hermes-studio')]
-    // Remove the old managed command, without touching user-owned commands or
-    // a Windows sidecar that a custom command may still depend on.
-    const existingOldPaths = oldPaths.filter(path => existsSync(path))
-    if (existingOldPaths.every(path => isManagedShim(readFileSync(path, 'utf-8'), SHIM_MARKER))) {
-      for (const path of existingOldPaths) rmSync(path)
+    if (platform === 'win32') {
+      writeWindowsShimPair(
+        aliasShimPath,
+        windowsCmdShimContent('ekko-studio', SHIM_MARKER),
+        createPowerShellShimContent(
+          executablePath,
+          process.arch,
+          options.runtimeVersion,
+          options.nodePath,
+          options.webUiScriptPath,
+        ),
+        SHIM_MARKER,
+      )
+    } else {
+      writeShim(aliasShimPath, commandContent, platform, SHIM_MARKER)
     }
   }
   const pathUpdated = await ensureUserBinOnPath(homeDir, binDir, platform, env).catch((err) => {
@@ -562,7 +576,7 @@ export async function installHermesStudioCliShim(options: CliShimInstallOptions 
     shimPath,
     status,
     pathUpdated,
-    reason: status === 'skipped' ? 'existing ekko-studio shim is not managed by Hermes Studio' : undefined,
+    reason: status === 'skipped' ? 'existing hermes-studio shim is not managed by Hermes Studio' : undefined,
   }
 }
 

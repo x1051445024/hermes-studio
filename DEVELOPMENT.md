@@ -1,6 +1,6 @@
 # Development Guidelines
 
-This document defines project-level development rules for Ekko Studio. It is tool-agnostic and applies to all contributors and coding agents.
+This document defines project-level development rules for Hermes Studio. It is tool-agnostic and applies to all contributors and coding agents.
 
 ## Commands
 
@@ -72,11 +72,11 @@ npm run build
 
 ## npm Publishing
 
-The source package is `ekko-studio`. `npm run build` followed by
-`npm run pack:npm -- /absolute/output/directory` creates both `ekko-studio` and
+The source package is `hermes-studio`. `npm run build` followed by
+`npm run pack:npm -- /absolute/output/directory` creates both `hermes-studio` and
 `hermes-web-ui` tarballs with the same version and build. Each tarball carries
-its own package name; the source manifest is not rewritten. Both expose
-`ekko-studio-web` and the existing CLI aliases.
+its own package name; the source manifest is not rewritten. The primary package
+exposes `hermes-studio-web`; the compatibility package exposes `hermes-web-ui`.
 
 For a local release, first set an unpublished version and log in with `npm login`.
 Then run `npm run publish:npm` to build, pack, and publish both packages using
@@ -101,7 +101,7 @@ separate job. Stable releases use `latest`; prerelease versions or GitHub
 prerelease events use `next`. If only one publish fails, rerun the failed job.
 
 Configure repository Actions secret `NPM_TOKEN` with publish permission for
-**both** packages (including permission to create `ekko-studio` on its first
+**both** packages (including permission to create `hermes-studio` on its first
 release) and non-interactive publishing enabled. Only the publish jobs receive
 the token. Existing npm versions cannot be overwritten.
 

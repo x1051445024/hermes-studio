@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { migrateWindowsLoginItem } from '../../packages/desktop/src/main/login-item-migration'
 
 const appId = 'com.hermeswebui.studio'
-const executable = 'D:\\Custom Apps\\Studio\\Ekko Studio.exe'
-const legacyPath = 'D:\\Custom Apps\\Studio\\Hermes Studio.exe'
+const executable = 'D:\\Custom Apps\\Studio\\Hermes Studio.exe'
+const legacyPath = 'D:\\Custom Apps\\Studio\\Ekko Studio.exe'
 type LaunchItem = NonNullable<LoginItemSettings['launchItems']>[number]
 
 function fixture(overrides: Partial<LaunchItem> = {}) {
@@ -40,7 +40,7 @@ describe('Windows login item migration across the Studio rename', () => {
 
   it.each([
     { name: 'another-app' },
-    { path: 'D:\\Other Studio\\Hermes Studio.exe' },
+    { path: 'D:\\Other Studio\\Ekko Studio.exe' },
     { path: executable },
     { args: [] },
     { args: ['--hidden', '--custom-option'] },

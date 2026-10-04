@@ -74,12 +74,12 @@ test('GitHub publisher fixes the repo and separates all five target feeds', asyn
   for (const target of ['darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64', 'linux-arm64']) {
     const env = { DESKTOP_UPDATE_TEST_TARGET: target, DESKTOP_UPDATE_TEST_VERSION: '0.7.900' }
     assert.equal(publishConfig(env).url, `https://github.com/${TEST_REPOSITORY}/releases/download/update-test-${target}/`)
-    assert.throws(() => publishConfig({ ...env, DESKTOP_UPDATE_TEST_URL: 'https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download/' }), /fixed/)
+    assert.throws(() => publishConfig({ ...env, DESKTOP_UPDATE_TEST_URL: 'https://github.com/x1051445024/hermes-studio/releases/latest/download/' }), /fixed/)
   }
   let called = false
   assert.throws(() => checkRepository({ repository: () => { called = true } }, { GITHUB_ACTIONS: 'true' }), /DESKTOP_UPDATE_TEST_TOKEN/)
   assert.equal(called, false)
-  for (const repo of [{ full_name: 'EKKOLearnAI/ekko-studio' }, { full_name: TEST_REPOSITORY, private: true }, { full_name: TEST_REPOSITORY, archived: true }]) {
+  for (const repo of [{ full_name: 'x1051445024/hermes-studio' }, { full_name: TEST_REPOSITORY, private: true }, { full_name: TEST_REPOSITORY, archived: true }]) {
     assert.throws(() => checkRepository({ repository: () => repo }, {}), /public test repository/)
   }
 })

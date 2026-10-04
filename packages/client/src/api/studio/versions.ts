@@ -1,4 +1,4 @@
-export const STUDIO_VERSION_MANIFEST_URL = 'https://api.ekkostudio.xyz/api/studio/versions'
+export const STUDIO_VERSION_MANIFEST_URL = 'https://raw.githubusercontent.com/x1051445024/hermes-studio/main/docs/studio/versions.json'
 
 export type AppAccessMode = 'internal' | 'public_beta' | 'paid'
 

@@ -1,4 +1,4 @@
-const ANNOUNCEMENTS_URL = 'https://api.ekkostudio.xyz/api/studio/announcements'
+const ANNOUNCEMENTS_URL = 'https://raw.githubusercontent.com/x1051445024/hermes-studio/main/docs/studio/announcements.json'
 
 export async function fetchStudioAnnouncements(localeInput: unknown): Promise<unknown> {
   const locale = /^zh(?:[-_]|$)/i.test(String(localeInput || 'en')) ? 'zh-CN' : 'en'

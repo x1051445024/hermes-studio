@@ -17,7 +17,6 @@ import {
 const { t } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
-const purchaseUrl = 'https://ekkostudio.xyz/docs/hermes-esp32-intro/index.html'
 const showAddModal = ref(false)
 const loading = ref(false)
 const saving = ref(false)
@@ -128,10 +127,6 @@ function openAddModal() {
   showAddModal.value = true
 }
 
-function openPurchasePage() {
-  window.open(purchaseUrl, '_blank', 'noopener,noreferrer')
-}
-
 async function submitDevice(): Promise<boolean | void> {
   if (saving.value) return false
   const deviceCode = form.value.device_code.trim()
@@ -236,9 +231,6 @@ onMounted(() => {
       <div class="panel-actions">
         <NButton size="small" :loading="loading" @click="loadDevices">
           {{ t('mcuDevices.refresh') }}
-        </NButton>
-        <NButton size="small" secondary @click="openPurchasePage">
-          {{ t('mcuDevices.purchase') }}
         </NButton>
         <NButton size="small" type="primary" @click="openAddModal">
           {{ t('mcuDevices.add') }}

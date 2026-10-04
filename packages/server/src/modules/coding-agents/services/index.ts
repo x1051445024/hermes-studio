@@ -21,6 +21,7 @@ import { registerCodexProxyTarget, restoreCodexProxyTarget } from './codex/proxy
 import { compactCodexThread } from './runtime/codex-compact'
 import { hermesPromptDocument, writeManagedPromptFile } from './prompt-file'
 import type { ApiMode, CodingAgentImageInput } from '../protocol/types'
+import { shouldUseLocalCodingAgentProxy } from '../protocol/local-proxy'
 import { PROVIDER_PRESETS } from '../../studio/contracts/providers'
 import { getModelContextLength, getModelRuntimeCapabilities } from '../../studio/public/provider-runtime'
 import { getSystemPrompt, studioMcpUsageGuidelines } from '../../studio/public/runs/prompt'
@@ -173,28 +174,42 @@ function piProxyTargetKeyPath(): string {
   return join(getWebUiHome(), CODING_AGENT_HOME_DIR, PI_PROXY_TARGET_KEY_FILE)
 }
 
+const piProxyTargetKeyPromises = new Map<string, Promise<Buffer>>()
+
 async function readOrCreatePiProxyTargetKey(): Promise<Buffer> {
   const path = piProxyTargetKeyPath()
-  await mkdir(dirname(path), { recursive: true })
-  try {
-    const existing = await readFile(path)
-    if (existing.length !== 32) throw new Error(`Invalid Pi proxy target encryption key length: ${existing.length}`)
-    await chmod(path, 0o600)
-    return existing
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') throw err
-  }
+  const pending = piProxyTargetKeyPromises.get(path)
+  if (pending) return pending
 
-  const generated = randomBytes(32)
+  const operation = (async () => {
+    await mkdir(dirname(path), { recursive: true })
+    try {
+      const existing = await readFile(path)
+      if (existing.length !== 32) throw new Error(`Invalid Pi proxy target encryption key length: ${existing.length}`)
+      await chmod(path, 0o600)
+      return existing
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err
+    }
+
+    const generated = randomBytes(32)
+    try {
+      await writeFile(path, generated, { mode: 0o600, flag: 'wx' })
+      return generated
+    } catch (err: any) {
+      if (err?.code !== 'EEXIST') throw err
+      const existing = await readFile(path)
+      if (existing.length !== 32) throw new Error(`Invalid Pi proxy target encryption key length: ${existing.length}`)
+      await chmod(path, 0o600)
+      return existing
+    }
+  })()
+  piProxyTargetKeyPromises.set(path, operation)
   try {
-    await writeFile(path, generated, { mode: 0o600, flag: 'wx' })
-    return generated
-  } catch (err: any) {
-    if (err?.code !== 'EEXIST') throw err
-    const existing = await readFile(path)
-    if (existing.length !== 32) throw new Error(`Invalid Pi proxy target encryption key length: ${existing.length}`)
-    await chmod(path, 0o600)
-    return existing
+    return await operation
+  } catch (err) {
+    piProxyTargetKeyPromises.delete(path)
+    throw err
   }
 }
 
@@ -1326,7 +1341,7 @@ function inheritClaudeSettings(existingContent: string | null | undefined = ''):
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const inherited = { ...parsed } as Record<string, unknown>
     // Scoped Coding Agent runs authenticate exclusively through the selected
-    // Ekko Studio profile proxy. Never inherit native Claude login/provider
+    // Hermes Studio profile proxy. Never inherit native Claude login/provider
     // routing, otherwise a stale OAuth session can override the profile.
     delete inherited.apiKeyHelper
     delete inherited.awsAuthRefresh
@@ -1878,7 +1893,7 @@ function opencodeRuntimeConfig(
       provider: {
         [OPENCODE_PROVIDER_ID]: {
           npm: '@ai-sdk/openai',
-          name: runtime.provider || 'Ekko Studio',
+          name: runtime.provider || 'Hermes Studio',
           options: {
             baseURL: runtime.baseUrl || '',
             apiKey: `{env:${OPENCODE_API_KEY_ENV}}`,
@@ -2091,13 +2106,27 @@ function persistedPiRuntimeRoots(): string[] {
   return roots
 }
 
+function rewritePiProxyModelBaseUrl(content: string, baseUrl: string): string | null {
+  try {
+    const models = JSON.parse(content)
+    const provider = models?.providers?.[PI_PROVIDER_ID]
+    if (!provider || typeof provider !== 'object') return null
+    provider.baseUrl = baseUrl
+    return `${JSON.stringify(models, null, 2)}\n`
+  } catch {
+    return null
+  }
+}
+
 export async function restorePersistedPiProxyTargets(): Promise<number> {
   let restoredCount = 0
+  const proxyTargetOptions = { useLocalProxy: await shouldUseLocalCodingAgentProxy() }
   for (const root of persistedPiRuntimeRoots()) {
     const targetPath = join(root, PI_PROXY_TARGET_FILE)
+    const modelsPath = join(root, 'models.json')
+    let modelsContent = await safeReadFile(modelsPath)
     let content = await safeReadFile(targetPath)
     if (!content) {
-      const modelsContent = await safeReadFile(join(root, 'models.json'))
       if (!modelsContent) continue
       try {
         const models = JSON.parse(modelsContent)
@@ -2154,7 +2183,14 @@ export async function restorePersistedPiProxyTargets(): Promise<number> {
         || (!apiKey && input.provider !== OPENCODE_FREE_PROVIDER)) continue
       const restoredInput = { ...input, apiKey }
       delete restoredInput.apiKeyEncrypted
-      restoreCodexProxyTarget(restoredInput, token)
+      const restoredTarget = restoreCodexProxyTarget(restoredInput, token, proxyTargetOptions)
+      modelsContent = modelsContent || await safeReadFile(modelsPath)
+      if (modelsContent) {
+        const rewrittenModels = rewritePiProxyModelBaseUrl(modelsContent, restoredTarget.baseUrl)
+        if (rewrittenModels && rewrittenModels !== modelsContent) {
+          await atomicWritePrivateFile(modelsPath, rewrittenModels)
+        }
+      }
       if (legacyApiKey || encryptedVersion === 1) {
         const migratedInput = { ...input }
         delete migratedInput.apiKey
@@ -2227,9 +2263,31 @@ function tomlSectionString(content: string, sectionName: string, key: string): s
   return ''
 }
 
+function rewriteCodexProxyBaseUrl(content: string, baseUrl: string): string | null {
+  const newline = content.includes('\r\n') ? '\r\n' : '\n'
+  const lines = content.split(/\r?\n/)
+  let section = ''
+  let changed = false
+  for (let index = 0; index < lines.length; index += 1) {
+    const header = lines[index].match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)
+    if (header) {
+      section = header[1].trim()
+      continue
+    }
+    if (section !== 'model_providers.custom') continue
+    const assignment = lines[index].match(/^(\s*base_url\s*=\s*)"(?:[^"\\]|\\.)*"(.*)$/)
+    if (!assignment) continue
+    lines[index] = `${assignment[1]}${JSON.stringify(baseUrl)}${assignment[2]}`
+    changed = true
+    break
+  }
+  return changed ? lines.join(newline) : null
+}
+
 export async function restorePersistedCodexProxyTargets(): Promise<number> {
   let restoredCount = 0
   const restoredRouteKeys = new Set<string>()
+  const proxyTargetOptions = { useLocalProxy: await shouldUseLocalCodingAgentProxy() }
   for (const config of persistedCodexProxyConfigs()) {
     const content = await safeReadFile(config.path)
     if (!content) continue
@@ -2253,7 +2311,7 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
       }, null)
       const apiKey = String(resolved.apiKey || '').trim()
       if (!profile || !provider || !model || !baseUrl || (!apiKey && provider !== OPENCODE_FREE_PROVIDER)) continue
-      restoreCodexProxyTarget({
+      const restoredTarget = restoreCodexProxyTarget({
         profile,
         provider,
         model,
@@ -2266,7 +2324,11 @@ export async function restorePersistedCodexProxyTargets(): Promise<number> {
         extraHeaders: resolved.extraHeaders,
         preserveClientIdentity: resolved.preserveClientIdentity,
         proxyUrl: resolved.proxyUrl,
-      }, token)
+      }, token, proxyTargetOptions)
+      const rewrittenContent = rewriteCodexProxyBaseUrl(content, restoredTarget.baseUrl)
+      if (rewrittenContent && rewrittenContent !== content) {
+        await atomicWritePrivateFile(config.path, rewrittenContent)
+      }
       restoredRouteKeys.add(routeKey)
       restoredCount += 1
     } catch {
@@ -2832,12 +2894,16 @@ function extractVersion(raw: string): string {
 
 async function getGlobalNpmBin(): Promise<string | null> {
   if (typeof cachedGlobalNpmBin !== 'undefined') return cachedGlobalNpmBin
+  const windowsNpmBin = process.platform === 'win32'
+    ? join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm')
+    : null
+  const fallback = windowsNpmBin && existsSync(windowsNpmBin) ? windowsNpmBin : null
   try {
     const { stdout } = await runNpm(['prefix', '-g'], { timeout: 5000 })
     const prefix = stdout.trim()
-    cachedGlobalNpmBin = prefix ? (process.platform === 'win32' ? prefix : join(prefix, 'bin')) : null
+    cachedGlobalNpmBin = prefix ? (process.platform === 'win32' ? prefix : join(prefix, 'bin')) : fallback
   } catch {
-    cachedGlobalNpmBin = null
+    cachedGlobalNpmBin = fallback
   }
   return cachedGlobalNpmBin
 }
@@ -3569,6 +3635,8 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
 
   let args: string[] = []
   let env: Record<string, string> = {}
+  const useLocalCodingAgentProxy = await shouldUseLocalCodingAgentProxy()
+  const proxyTargetOptions = { useLocalProxy: useLocalCodingAgentProxy }
 
   if (tool.id === 'claude-code') {
     const proxyTarget = baseUrl && (apiKey || freeRuntime)
@@ -3585,7 +3653,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           extraHeaders: input.extraHeaders,
           preserveClientIdentity: input.preserveClientIdentity,
           proxyUrl: input.proxyUrl,
-        })
+        }, proxyTargetOptions)
       : null
     const claudeBaseUrl = proxyTarget?.baseUrl || baseUrl
     const claudeApiKey = proxyTarget?.token || apiKey
@@ -3663,7 +3731,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           extraHeaders: input.extraHeaders,
           preserveClientIdentity: input.preserveClientIdentity,
           proxyUrl: input.proxyUrl,
-        })
+        }, proxyTargetOptions)
       : null
     const codexBaseUrl = proxyTarget?.baseUrl || baseUrl
     const codexApiKey = proxyTarget?.token || apiKey
@@ -3762,7 +3830,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           extraHeaders: input.extraHeaders,
           preserveClientIdentity: input.preserveClientIdentity,
           proxyUrl: input.proxyUrl,
-        })
+        }, proxyTargetOptions)
       : null
     const piBaseUrl = proxyTarget?.baseUrl || baseUrl
     const piApiKey = proxyTarget?.token || apiKey
@@ -3841,7 +3909,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           extraHeaders: input.extraHeaders,
           preserveClientIdentity: input.preserveClientIdentity,
           proxyUrl: input.proxyUrl,
-        })
+        }, proxyTargetOptions)
       : null
     const baseConfigRoot = getScopedConfigRoot(tool.id, scope)
     const globalGrokHome = process.env.GROK_HOME?.trim() || join(getGlobalConfigHome(), '.grok')
@@ -3892,7 +3960,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
       extraHeaders: input.extraHeaders,
       preserveClientIdentity: input.preserveClientIdentity,
       proxyUrl: input.proxyUrl,
-    })
+    }, proxyTargetOptions)
     const capabilities = getModelRuntimeCapabilities({ profile: scope.profile, provider, model })
     const prepared = await prepareDshRuntime({
       ...await dshHost.runtimeInput(),
@@ -3928,7 +3996,7 @@ export async function prepareCodingAgentLaunch(id: string, input: CodingAgentLau
           extraHeaders: input.extraHeaders,
           preserveClientIdentity: input.preserveClientIdentity,
           proxyUrl: input.proxyUrl,
-        })
+        }, proxyTargetOptions)
       : null
     const baseRuntime = await ensureOpenCodeScopedBaseConfigFiles(scope, scopedSystemPrompt, workspaceDir)
     const configPath = join(rootDir, OPENCODE_CONFIG_FILE)

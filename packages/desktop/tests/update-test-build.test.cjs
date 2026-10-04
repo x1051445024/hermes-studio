@@ -85,7 +85,7 @@ async function artifactsFixture(t, target = 'darwin-arm64') {
   const mac = target.startsWith('darwin')
   const linux = target.startsWith('linux')
   const manifestName = linux ? (target.endsWith('arm64') ? 'latest-linux-arm64.yml' : 'latest-linux.yml') : mac ? 'latest-mac.yml' : 'latest.yml'
-  const resources = join(output, mac ? `${target.endsWith('arm64') ? 'mac-arm64' : 'mac'}/Ekko Studio.app/Contents/Resources`
+  const resources = join(output, mac ? `${target.endsWith('arm64') ? 'mac-arm64' : 'mac'}/Hermes Studio.app/Contents/Resources`
     : linux ? `${target.endsWith('arm64') ? 'linux-arm64-unpacked' : 'linux-unpacked'}/resources` : 'win-unpacked/resources')
   const source = join(output, 'package-source')
   await mkdir(source)
@@ -102,7 +102,7 @@ async function artifactsFixture(t, target = 'darwin-arm64') {
   const files = []
   for (const extension of (mac ? ['zip', 'dmg'] : linux ? ['AppImage'] : ['exe'])) {
     const arch = target === 'linux-x64' ? 'x86_64' : target.split('-')[1]
-    const name = `Ekko.Studio-${metadata.version}-${arch}.${extension}`
+    const name = `Hermes.Studio-${metadata.version}-${arch}.${extension}`
     const bytes = Buffer.from(`fixture:${name}`)
     await writeFile(join(output, name), bytes)
     if (linux) {

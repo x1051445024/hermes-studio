@@ -131,7 +131,7 @@ const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map<string, Array<{
   ['mcp__ekko_studio_api', [
     {
       name: 'ekko_studio_api_openapi_get',
-      description: 'Return the compact Ekko Studio API module index or filtered endpoint documentation. Call without filters first, then filter by tag, path, or method.',
+      description: 'Return the compact Hermes Studio API module index or filtered endpoint documentation. Call without filters first, then filter by tag, path, or method.',
       inputSchema: inputSchema({
         path: { type: 'string', description: 'Optional exact endpoint path filter.' },
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] },
@@ -141,7 +141,7 @@ const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map<string, Array<{
     },
     {
       name: 'ekko_studio_api_request',
-      description: 'Call a documented Ekko Studio API endpoint using its relative path and structured JSON fields.',
+      description: 'Call a documented Hermes Studio API endpoint using its relative path and structured JSON fields.',
       inputSchema: inputSchema({
         method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] },
         path: { type: 'string', description: 'Relative /api/... or /health path. Full URLs are rejected.' },
@@ -156,15 +156,15 @@ const HERMES_STUDIO_SPLIT_MCP_TOOLS = new Map<string, Array<{
   ]],
   ['mcp__ekko_studio_browser', [categoryToolset(
     'ekko_studio_browser_toolset',
-    'Discover and invoke Ekko Studio Desktop browser operations. Covers tabs and leases, navigation, accessibility snapshots, interaction, screenshots, and console logs.',
+    'Discover and invoke Hermes Studio Desktop browser operations. Covers tabs and leases, navigation, accessibility snapshots, interaction, screenshots, and console logs.',
   )]],
   ['mcp__ekko_studio_devices', [categoryToolset(
     'ekko_studio_devices_toolset',
-    'Discover and invoke Ekko Studio LAN and remote-device operations. Covers discovery, peer connections, terminals, structured commands, and file transfer.',
+    'Discover and invoke Hermes Studio LAN and remote-device operations. Covers discovery, peer connections, terminals, structured commands, and file transfer.',
   )]],
   ['mcp__ekko_studio_use', [categoryToolset(
     'ekko_studio_use_toolset',
-    'Discover and invoke high-level Ekko Studio operations for explicit user-requested runs, sessions, usage, profiles, models, providers, workers, and workflows.',
+    'Discover and invoke high-level Hermes Studio operations for explicit user-requested runs, sessions, usage, profiles, models, providers, workers, and workflows.',
   )]],
 ])
 

@@ -568,7 +568,7 @@ async function synthesizeVoiceProxyText(ctx: Context, text: string) {
     }
     ctx.status = statusForTtsError(error)
     ctx.body = {
-      error: 'Ekko Studio TTS failed',
+      error: 'Hermes Studio TTS failed',
       detail: sanitizeTtsError(error),
     }
   }

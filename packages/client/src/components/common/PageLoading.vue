@@ -24,17 +24,34 @@ provide(pageLoadingTaskKey, task => {
   }
 })
 let sequence = 0
-let frame: number | undefined
+let frame: number | ReturnType<typeof setTimeout> | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 let shownAt = performance.now()
+
+function cancelPaint() {
+  if (frame === undefined) return
+  if (typeof globalThis.cancelAnimationFrame === 'function' && typeof frame === 'number') {
+    globalThis.cancelAnimationFrame(frame)
+  } else {
+    clearTimeout(frame)
+  }
+  frame = undefined
+}
+
+function schedulePaint(callback: () => void) {
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    frame = globalThis.requestAnimationFrame(callback)
+  } else {
+    frame = setTimeout(callback, 0)
+  }
+}
 
 onMounted(() => { if (visible.value) shownAt = performance.now() })
 watch(visible, show => { if (show) shownAt = performance.now() }, { flush: 'post' })
 
 function cancelHide() {
-  if (frame !== undefined) cancelAnimationFrame(frame)
+  cancelPaint()
   if (timer !== undefined) clearTimeout(timer)
-  frame = undefined
   timer = undefined
 }
 
@@ -52,7 +69,7 @@ watch(pending, async show => {
   if (current !== sequence) return
   const hideAfterPaint = () => {
     if (current !== sequence) return
-    frame = requestAnimationFrame(() => {
+    schedulePaint(() => {
       if (current === sequence && !pending.value) {
         visible.value = false
         // Later session requests keep the surface visible after its first reveal.

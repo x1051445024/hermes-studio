@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const PRIMARY_FEED = 'https://download.ekkolearnai.com/latest'
-const FALLBACK_FEED = 'https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download'
+const PRIMARY_FEED = 'https://github.com/x1051445024/hermes-studio/releases/latest/download'
+const FALLBACK_FEED = 'https://github.com/x1051445024/hermes-studio/releases/latest/download'
 
 export type DesktopUpdateSource =
   | { channel: 'stable'; url: string; fallbackUrl: string }
@@ -21,9 +21,12 @@ export function validateTestUpdateUrl(value: unknown): string {
   if (path.endsWith('.yml') || path.endsWith('.yaml')) {
     throw new Error('Use the feed directory URL, not the update manifest URL')
   }
-  if ((url.hostname === 'download.ekkolearnai.com' && (!path || path === '/latest' || path.startsWith('/latest/')))
-    || (url.hostname === 'github.com' && path.startsWith('/ekkolearnai/ekko-studio/releases'))) {
+  if (url.hostname === 'github.com' && path.startsWith('/x1051445024/hermes-studio/releases')) {
     throw new Error('The production update source cannot be used for test builds')
+  }
+  if (url.hostname === 'download.ekkolearnai.com'
+    && (path === '' || path === '/latest' || path.startsWith('/latest/'))) {
+    throw new Error('The Runtime production source cannot be used for desktop update test builds')
   }
   url.pathname = `${url.pathname.replace(/\/+$/, '')}/`
   return url.href

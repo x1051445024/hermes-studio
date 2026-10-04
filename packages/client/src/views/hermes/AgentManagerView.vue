@@ -266,19 +266,6 @@ async function syncAgentStatus() {
   applyAgentStatusSnapshot(await fetchAgentStatusSnapshot())
 }
 
-async function loadCachedStatus() {
-  loading.value = true
-  loadError.value = ''
-  try {
-    await syncAgentStatus()
-  } catch (error) {
-    loadError.value = errorMessage(error)
-  } finally {
-    loading.value = false
-    void checkExternalCursorInstallation()
-  }
-}
-
 let checkingExternalInstallation = false
 let managerMounted = false
 let externalInstallationRefreshPending = false
@@ -325,9 +312,24 @@ async function refreshAll() {
   } catch (error) {
     errors.push(errorMessage(error))
   }
+  const codingAgentsResult = results[0]
+  if (codingAgentsResult?.status === 'fulfilled') tools.value = codingAgentsResult.value.tools
   if (errors.length) loadError.value = errors.join('\n')
   loading.value = false
   if (externalInstallationRefreshPending) void checkExternalCursorInstallation()
+}
+
+async function loadInitialStatus() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    await syncAgentStatus()
+  } catch (error) {
+    loadError.value = errorMessage(error)
+  } finally {
+    loading.value = false
+    void checkExternalCursorInstallation()
+  }
 }
 
 async function openHermesCliDetails() {
@@ -455,7 +457,7 @@ onMounted(() => {
     delete query.runtime
     void router.replace({ query })
   }
-  void loadCachedStatus()
+  void loadInitialStatus()
   void maybePromptLegacyWindowsDataMigration()
 })
 

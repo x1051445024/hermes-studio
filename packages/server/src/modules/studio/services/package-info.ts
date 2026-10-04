@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 
-export type StudioPackageName = 'ekko-studio' | 'hermes-web-ui'
+export type StudioPackageName = 'hermes-studio' | 'hermes-web-ui'
 
 export function isStudioPackageName(name: unknown): name is StudioPackageName {
-  return name === 'ekko-studio' || name === 'hermes-web-ui'
+  return name === 'hermes-studio' || name === 'hermes-web-ui'
 }
 
 export function readStudioPackageInfo(): {

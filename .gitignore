@@ -57,3 +57,15 @@ packages/client/src/**/*.js
 .hermes/
 # Local npm release tarballs
 /release/npm/
+
+# Build caches and scratch dirs created by the local patch workflow
+.cache/
+.npm-cache/
+.scratch-packaging/
+.scratch-work/
+.tmp-build/
+.tmp-desktop/
+.tmp-gates/
+.tmp-gates-*/
+.tmp-round1-fix*/
+.gates/

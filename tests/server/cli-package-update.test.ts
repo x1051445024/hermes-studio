@@ -12,8 +12,8 @@ afterEach(() => {
 
 describe('CLI npm package updates', () => {
   it.each([
-    ['ekko-studio', 'darwin'], ['hermes-web-ui', 'darwin'],
-    ['ekko-studio', 'win32'], ['hermes-web-ui', 'win32'],
+    ['hermes-studio', 'darwin'], ['hermes-web-ui', 'darwin'],
+    ['hermes-studio', 'win32'], ['hermes-web-ui', 'win32'],
   ])('updates and restarts %s on %s without using a shared command shim', async (name, platform) => {
     vi.resetModules()
     Object.defineProperty(process, 'platform', { value: platform })

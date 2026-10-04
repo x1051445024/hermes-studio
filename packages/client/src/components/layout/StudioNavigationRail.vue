@@ -52,14 +52,6 @@ function handleNavigate(key: string) {
     <div class="studio-navigation-rail__bottom">
       <NTooltip placement="right" trigger="hover">
         <template #trigger>
-          <a class="studio-navigation-rail__item" href="https://apikey.fan/register?aff=LIBAPI" target="_blank" rel="noopener noreferrer" :aria-label="t('sidebar.apiRelay')">
-            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" /></svg>
-          </a>
-        </template>
-        {{ t('sidebar.apiRelay') }}
-      </NTooltip>
-      <NTooltip placement="right" trigger="hover">
-        <template #trigger>
           <RouteLinkItem class="studio-navigation-rail__item" :to="{ name: 'hermes.settings' }" :active="activeKey === 'settings'" :aria-label="t('sidebar.settings')">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
           </RouteLinkItem>

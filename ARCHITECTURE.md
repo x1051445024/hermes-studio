@@ -1,6 +1,6 @@
 # Architecture
 
-Ekko Studio is a TypeScript monorepo that ships a local-first AI workspace
+Hermes Studio is a TypeScript monorepo that ships a local-first AI workspace
 through a web console, a Koa backend, and an Electron desktop app. It integrates
 Ekko Agent, Hermes Agent, and coding agents for chat, coding, and workflows.
 

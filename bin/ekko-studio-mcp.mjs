@@ -47,7 +47,7 @@ const VERSION = readPackageVersion()
 function printHelp() {
   process.stdout.write(`${DISPLAY_COMMAND} v${VERSION}
 
-Ekko Studio MCP stdio server.
+Hermes Studio MCP stdio server.
 
 Usage:
   ${DISPLAY_COMMAND} [api|browser|devices|use|plan]
@@ -582,7 +582,7 @@ function compactOpenApiDocument(openapi, args = {}) {
   }
 
   return {
-    title: openapi?.info?.title || 'Ekko Studio API',
+    title: openapi?.info?.title || 'Hermes Studio API',
     version: openapi?.info?.version || '',
     usage: hasFilters
       ? 'Use the selected operation details to call ekko_studio_api_request with method, path, query, and body. Auth and profile are handled by the MCP server.'
@@ -645,7 +645,7 @@ function browserDescriptor() {
     if (process.platform !== 'win32' && (directoryInfo.mode & 0o077) !== 0) throw new Error('unsafe descriptor directory permissions')
     descriptor = JSON.parse(readFileSync(descriptorPath, 'utf8'))
   } catch {
-    throw new Error('Ekko Studio Desktop Browser is not running. Open the Desktop app and try again.')
+    throw new Error('Hermes Studio Desktop Browser is not running. Open the Desktop app and try again.')
   }
   const endpoint = String(descriptor?.endpoint || '')
   const token = String(descriptor?.token || '')
@@ -654,7 +654,7 @@ function browserDescriptor() {
     throw new Error('Desktop Browser Broker descriptor is invalid')
   }
   if (!Number.isInteger(descriptor.desktopPid) || descriptor.desktopPid <= 0) throw new Error('Desktop Browser Broker PID is invalid')
-  try { process.kill(descriptor.desktopPid, 0) } catch { throw new Error('Ekko Studio Desktop Browser is no longer running') }
+  try { process.kill(descriptor.desktopPid, 0) } catch { throw new Error('Hermes Studio Desktop Browser is no longer running') }
   return { endpoint, token, instanceId: String(descriptor.instanceId || '') }
 }
 
@@ -916,7 +916,7 @@ const tools = [
   {
     name: 'ekko_studio_browser_tabs',
     toolset: 'browser',
-    description: 'List, create, activate, close, or release control of Ekko Studio Desktop browser tabs. Reuse explicit tab_id values across calls.',
+    description: 'List, create, activate, close, or release control of Hermes Studio Desktop browser tabs. Reuse explicit tab_id values across calls.',
     inputSchema: browserInputSchema({
       action: { type: 'string', enum: ['list', 'create', 'activate', 'close', 'release'] },
       tab_id: { type: 'string', description: 'Required for activate, close, and release.' },
@@ -927,7 +927,7 @@ const tools = [
   {
     name: 'ekko_studio_browser_navigate',
     toolset: 'browser',
-    description: 'Open an HTTP/HTTPS URL or move back, forward, reload, or stop one Ekko Studio Desktop browser tab.',
+    description: 'Open an HTTP/HTTPS URL or move back, forward, reload, or stop one Hermes Studio Desktop browser tab.',
     inputSchema: browserInputSchema({
       tab_id: { type: 'string' },
       action: { type: 'string', enum: ['open', 'back', 'forward', 'reload', 'stop'], description: 'Defaults to open when url is provided.' },
@@ -1013,7 +1013,7 @@ const tools = [
   {
     name: 'ekko_studio_api_openapi_get',
     toolset: 'api',
-    description: 'Return Ekko Studio API documentation as compact JSON. When the user asks to read/check the operation manual, API docs, endpoint docs, 接口文档, 接口手册, or 操作手册, call this tool without filters first to get the outline/module index. Without filters, returns only module purpose, keywords, and operation counts because the full API catalog is large. For endpoint details, call again with tag, path, or method filters, then use ekko_studio_api_request.',
+    description: 'Return Hermes Studio API documentation as compact JSON. When the user asks to read/check the operation manual, API docs, endpoint docs, 接口文档, 接口手册, or 操作手册, call this tool without filters first to get the outline/module index. Without filters, returns only module purpose, keywords, and operation counts because the full API catalog is large. For endpoint details, call again with tag, path, or method filters, then use ekko_studio_api_request.',
     inputSchema: inputSchema({
         path: {
           type: 'string',
@@ -1037,7 +1037,7 @@ const tools = [
   {
     name: 'ekko_studio_api_request',
     toolset: 'api',
-    description: 'Execute a Ekko Studio operation by calling an endpoint path. Use ekko_studio_api_openapi_get first as the operation manual to inspect method, parameters, requestBody, and responses. Do not use /api/studio/chat-run/* or /api/studio/sessions/* as an internal delegation mechanism.',
+    description: 'Execute a Hermes Studio operation by calling an endpoint path. Use ekko_studio_api_openapi_get first as the operation manual to inspect method, parameters, requestBody, and responses. Do not use /api/studio/chat-run/* or /api/studio/sessions/* as an internal delegation mechanism.',
     inputSchema: inputSchema({
         method: {
           type: 'string',
@@ -1046,7 +1046,7 @@ const tools = [
         },
         path: {
           type: 'string',
-          description: 'Relative Ekko Studio endpoint path from the operation manual, for example /api/studio/sessions?limit=20. Full URLs and // paths are rejected.',
+          description: 'Relative Hermes Studio endpoint path from the operation manual, for example /api/studio/sessions?limit=20. Full URLs and // paths are rejected.',
         },
         body: {
           type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
@@ -1099,7 +1099,7 @@ const tools = [
   {
     name: 'ekko_studio_use_chat_run',
     toolset: 'use',
-    description: 'Start one user-requested Ekko Studio chat or coding-agent run through the HTTP bridge and wait for completion. Do not use this as an internal delegation or subtask mechanism.',
+    description: 'Start one user-requested Hermes Studio chat or coding-agent run through the HTTP bridge and wait for completion. Do not use this as an internal delegation or subtask mechanism.',
     inputSchema: inputSchema({
         input: {
           oneOf: [
@@ -1188,7 +1188,7 @@ const tools = [
   {
     name: 'ekko_studio_use_sessions_list',
     toolset: 'use',
-    description: 'List Ekko Studio chat sessions for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
+    description: 'List Hermes Studio chat sessions for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
     inputSchema: inputSchema({
         limit: {
           type: 'number',
@@ -1203,7 +1203,7 @@ const tools = [
   {
     name: 'ekko_studio_use_sessions_count',
     toolset: 'use',
-    description: 'Count Ekko Studio chat sessions without returning the session list. Do not use this as an internal delegation mechanism.',
+    description: 'Count Hermes Studio chat sessions without returning the session list. Do not use this as an internal delegation mechanism.',
     inputSchema: inputSchema({
         source: {
           type: 'string',
@@ -1214,7 +1214,7 @@ const tools = [
   {
     name: 'ekko_studio_use_usage_stats',
     toolset: 'use',
-    description: 'Query Ekko Studio usage totals, cost estimate, model breakdown, and daily trend for the selected profile.',
+    description: 'Query Hermes Studio usage totals, cost estimate, model breakdown, and daily trend for the selected profile.',
     inputSchema: inputSchema({
         days: {
           type: 'number',
@@ -1225,7 +1225,7 @@ const tools = [
   {
     name: 'ekko_studio_use_session_get',
     toolset: 'use',
-    description: 'Get one Ekko Studio session by id for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
+    description: 'Get one Hermes Studio session by id for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
     inputSchema: inputSchema({
         session_id: {
           type: 'string',
@@ -1236,7 +1236,7 @@ const tools = [
   {
     name: 'ekko_studio_use_session_messages',
     toolset: 'use',
-    description: 'Get messages for one Ekko Studio conversation. By default returns user and assistant messages only. Do not use this as an internal delegation mechanism.',
+    description: 'Get messages for one Hermes Studio conversation. By default returns user and assistant messages only. Do not use this as an internal delegation mechanism.',
     inputSchema: inputSchema({
         session_id: {
           type: 'string',
@@ -1266,7 +1266,7 @@ const tools = [
   {
     name: 'ekko_studio_use_session_delete',
     toolset: 'use',
-    description: 'Delete one Ekko Studio session by id for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
+    description: 'Delete one Hermes Studio session by id for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
     inputSchema: inputSchema({
         session_id: {
           type: 'string',
@@ -1277,7 +1277,7 @@ const tools = [
   {
     name: 'ekko_studio_use_session_rename',
     toolset: 'use',
-    description: 'Rename one Ekko Studio session title for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
+    description: 'Rename one Hermes Studio session title for an explicit user-requested session operation. Do not use this as an internal delegation mechanism.',
     inputSchema: inputSchema({
         session_id: {
           type: 'string',
@@ -1292,13 +1292,13 @@ const tools = [
   {
     name: 'ekko_studio_use_profiles_list',
     toolset: 'use',
-    description: 'List Ekko Studio profiles.',
+    description: 'List Hermes Studio profiles.',
     inputSchema: inputSchema(),
   },
   {
     name: 'ekko_studio_use_available_models',
     toolset: 'use',
-    description: 'List available Ekko Studio models for the selected profile as a compact provider/model summary. Use query to narrow results or include_details=true only when raw provider metadata is required.',
+    description: 'List available Hermes Studio models for the selected profile as a compact provider/model summary. Use query to narrow results or include_details=true only when raw provider metadata is required.',
     inputSchema: inputSchema({
         query: {
           type: 'string',
@@ -1328,7 +1328,7 @@ const tools = [
   {
     name: 'ekko_studio_use_provider_add',
     toolset: 'use',
-    description: 'Add or update a Ekko Studio model provider for the selected profile, then make it the active default provider/model.',
+    description: 'Add or update a Hermes Studio model provider for the selected profile, then make it the active default provider/model.',
     inputSchema: inputSchema({
         name: {
           type: 'string',
@@ -1364,7 +1364,7 @@ const tools = [
   {
     name: 'ekko_studio_use_provider_delete',
     toolset: 'use',
-    description: 'Delete a Ekko Studio model provider or clear a built-in provider credential for the selected profile.',
+    description: 'Delete a Hermes Studio model provider or clear a built-in provider credential for the selected profile.',
     inputSchema: inputSchema({
         pool_key: {
           type: 'string',
@@ -1394,7 +1394,7 @@ const tools = [
     inputSchema: inputSchema({
         session_id: {
           type: 'string',
-          description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.',
+          description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.',
         },
         purpose: {
           type: 'string',
@@ -1416,7 +1416,7 @@ const tools = [
     toolset: 'use',
     description: 'With the user’s explicit request, ask their mobile App to list, create, update, or delete calendar events in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
     inputSchema: inputSchema({
-      session_id: { type: 'string', description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.' },
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
       action: { type: 'string', enum: ['list', 'create', 'update', 'delete'], description: 'Calendar operation.' },
       purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
       start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
@@ -1431,7 +1431,7 @@ const tools = [
     toolset: 'use',
     description: 'With the user’s explicit request, ask their mobile App to list, create, update, complete, or delete reminders in the current direct chat. The App always requires one-time confirmation. Single-item delete requires exact listed id, title and start_ms (calendar) or due_ms when present (reminder), with fresh App confirmation. Background access is not supported.',
     inputSchema: inputSchema({
-      session_id: { type: 'string', description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.' },
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
       action: { type: 'string', enum: ['list', 'create', 'update', 'complete', 'delete'], description: 'Reminder operation.' },
       purpose: { type: 'string', description: 'Short user-visible reason for the request.' },
       start_ms: { type: 'number', description: 'List range start as Unix milliseconds.' },
@@ -1447,7 +1447,7 @@ const tools = [
     toolset: 'use',
     description: 'With the user’s explicit request, ask their iPhone or iPad App to read selected Apple HealthKit data once in the current direct chat. iOS only; read-only; no background collection, diagnosis, advertising, delegated tasks, workflows, or group chats.',
     inputSchema: inputSchema({
-      session_id: { type: 'string', description: 'Exact current Ekko Studio direct-chat session id supplied in the run context.' },
+      session_id: { type: 'string', description: 'Exact current Hermes Studio direct-chat session id supplied in the run context.' },
       purpose: { type: 'string', description: 'Short user-visible reason for reading the health data.' },
       metrics: { type: 'array', items: { type: 'string', enum: ['steps', 'sleep', 'heart_rate', 'resting_heart_rate', 'heart_rate_variability', 'oxygen_saturation', 'body_weight', 'active_energy', 'distance_walking_running', 'workouts'] }, minItems: 1, uniqueItems: true, description: 'Health metrics to read.' },
       start_ms: { type: 'number', description: 'Range start as Unix milliseconds.' },
@@ -1459,7 +1459,7 @@ const tools = [
   {
     name: 'ekko_studio_use_workflows_list',
     toolset: 'use',
-    description: 'List Ekko Studio workflows for the selected or requested profile.',
+    description: 'List Hermes Studio workflows for the selected or requested profile.',
     inputSchema: inputSchema({
         profile: {
           type: 'string',
@@ -1470,7 +1470,7 @@ const tools = [
   {
     name: 'ekko_studio_use_workflow_get',
     toolset: 'use',
-    description: 'Get one Ekko Studio workflow by id.',
+    description: 'Get one Hermes Studio workflow by id.',
     inputSchema: inputSchema({
         workflow_id: {
           type: 'string',
@@ -1481,7 +1481,7 @@ const tools = [
   {
     name: 'ekko_studio_use_workflow_create',
     toolset: 'use',
-    description: 'Create a Ekko Studio workflow with optional nodes, edges, viewport, workspace, and profile.',
+    description: 'Create a Hermes Studio workflow with optional nodes, edges, viewport, workspace, and profile.',
     inputSchema: inputSchema({
         name: {
           type: 'string',
@@ -1515,7 +1515,7 @@ const tools = [
   {
     name: 'ekko_studio_use_workflow_update',
     toolset: 'use',
-    description: 'Update a Ekko Studio workflow name, workspace, nodes, edges, or viewport.',
+    description: 'Update a Hermes Studio workflow name, workspace, nodes, edges, or viewport.',
     inputSchema: inputSchema({
         workflow_id: {
           type: 'string',
@@ -1549,7 +1549,7 @@ const tools = [
   {
     name: 'ekko_studio_use_workflow_delete',
     toolset: 'use',
-    description: 'Delete one Ekko Studio workflow by id, including its workflow run records.',
+    description: 'Delete one Hermes Studio workflow by id, including its workflow run records.',
     inputSchema: inputSchema({
         workflow_id: {
           type: 'string',
@@ -1804,18 +1804,18 @@ const TOOL_ALIASES = new Map([
 const CATEGORY_TOOLSETS = {
   browser: {
     name: 'ekko_studio_browser_toolset',
-    coverage: 'Ekko Studio Desktop browser tabs and leases; HTTP/HTTPS navigation; accessibility snapshots with stable refs; single or sequential batch click, type, key press, and scroll interaction; viewport or full-page screenshots; bounded console log read and clear.',
-    description: 'Discover and invoke Ekko Studio Desktop browser operations without loading every browser tool schema into the model context. Covers tab list/create/activate/close/release, navigation back/forward/reload/stop/open, accessibility snapshots, single or batch click/type/key/scroll interaction, screenshots, and console logs. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+    coverage: 'Hermes Studio Desktop browser tabs and leases; HTTP/HTTPS navigation; accessibility snapshots with stable refs; single or sequential batch click, type, key press, and scroll interaction; viewport or full-page screenshots; bounded console log read and clear.',
+    description: 'Discover and invoke Hermes Studio Desktop browser operations without loading every browser tool schema into the model context. Covers tab list/create/activate/close/release, navigation back/forward/reload/stop/open, accessibility snapshots, single or batch click/type/key/scroll interaction, screenshots, and console logs. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
   },
   devices: {
     name: 'ekko_studio_devices_toolset',
     coverage: 'LAN and remote device discovery and status; paired peer connect/disconnect; interactive terminal create/list/input/read/resize/close; structured remote command execution; file upload and download.',
-    description: 'Discover and invoke Ekko Studio LAN/remote-device operations without loading every device tool schema into the model context. Covers device list/scan, paired peer connections, interactive terminal lifecycle and I/O, structured command execution using command plus argument arrays, and remote file upload/download. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+    description: 'Discover and invoke Hermes Studio LAN/remote-device operations without loading every device tool schema into the model context. Covers device list/scan, paired peer connections, interactive terminal lifecycle and I/O, structured command execution using command plus argument arrays, and remote file upload/download. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
   },
   use: {
     name: 'ekko_studio_use_toolset',
     coverage: 'Explicit user-requested Studio chat/coding runs; one-time confirmed mobile location, calendar and reminder operations; session list/count/detail/messages/context/rename/delete; usage statistics; profiles and available models; provider add/delete; worker status; workflow CRUD and workflow run list/start/stop/rerun/delete.',
-    description: 'Discover and invoke high-level Ekko Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile location, calendar/reminder operations, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-device operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
+    description: 'Discover and invoke high-level Hermes Studio operations without loading every Studio-use tool schema into the model context. Covers explicit user-requested chat or coding runs, one-time confirmed mobile location, calendar/reminder operations, session management and clean context, usage statistics, profiles/models/providers, worker status, workflow CRUD, and workflow run lifecycle. Never use chat/session or mobile-device operations as an internal delegation mechanism. Use action=list for the compact operation catalog, action=describe for one full input schema, then action=call with that exact tool name and arguments.',
   },
 }
 
@@ -1882,7 +1882,7 @@ function serverInstructions() {
       + (USER_CLARIFICATION_ENABLED ? ' Use ekko_studio_clarify from this same MCP server to ask a necessary question and wait for the user in Studio/App, using the latest interaction context_id. Never treat timeout, dismissal, or cancellation as approval.' : '')
     : ''
   if (ACTIVE_TOOLSET === 'api') {
-    return 'Ekko Studio API operations. Use ekko_studio_api_openapi_get without filters for the compact module index, call it again with tag/path/method filters for endpoint details, then call ekko_studio_api_request with the documented relative path and JSON fields.'
+    return 'Hermes Studio API operations. Use ekko_studio_api_openapi_get without filters for the compact module index, call it again with tag/path/method filters for endpoint details, then call ekko_studio_api_request with the documented relative path and JSON fields.'
   }
   const category = CATEGORY_TOOLSETS[ACTIVE_TOOLSET]
   return category ? `${category.description} Coverage: ${category.coverage}` : ''

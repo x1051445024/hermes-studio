@@ -33,8 +33,6 @@ const requiredPaths = [
   'connections.tabs.devices',
   'connections.app.subtitle',
   'connections.app.scanToAdd',
-  'connections.app.purchaseAccess',
-  'connections.app.downloadPaidDescription',
   'connections.app.viewMessages',
   'connections.app.scanModalTitle',
   'connections.app.lanConnection',

@@ -418,13 +418,12 @@ for (const phrase of [
   'Stop-Process -Id',
 ]) {
   if (!desktopInstallerScript.includes(phrase)) {
-    fail(`desktop installer must close stale Ekko Studio processes by installed executable path: ${phrase}`)
+    fail(`desktop installer must close stale Hermes Studio processes by installed executable path: ${phrase}`)
   }
 }
 
 for (const phrase of [
-  'https://download.ekkolearnai.com/latest',
-  'https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download',
+  'https://github.com/x1051445024/hermes-studio/releases/latest/download',
 ]) {
   if (!desktopUpdaterSource.includes(phrase)) {
     fail(`desktop updater source must preserve the production primary and fallback feeds: ${phrase}`)

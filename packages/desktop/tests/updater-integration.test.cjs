@@ -98,7 +98,12 @@ async function fixture(t, mac = false, testSource, linuxArch) {
       return
     }
     if (req.url.includes('.yml')) {
-      if ((control.failPrimary && req.url.startsWith('/cf/')) || (control.failTest && req.url.startsWith('/test/'))) {
+      if (control.failPrimary && req.url.startsWith('/gh/')) {
+        control.failPrimary = false
+        res.writeHead(503).end('fixture feed offline')
+        return
+      }
+      if (control.failTest && req.url.startsWith('/test/')) {
         res.writeHead(503).end('fixture feed offline')
         return
       }
@@ -249,13 +254,12 @@ test('real AppImage embedded differential download cancels and retries for both 
   })
 })
 
-test('real HTTP progress, fallback feed, cancellation and retry', { timeout: 20000 }, async t => {
+test('real HTTP progress, same-feed retry, cancellation and retry', { timeout: 20000 }, async t => {
   const { control, controller, updater, writers, ready } = await fixture(t)
   control.failPrimary = true
   await controller.checkForDesktopUpdates(false)
   await until(() => controller.getDesktopUpdateState().bytesPerSecond > 0, 'real progress')
-  assert(control.requests.some(url => url.startsWith('/cf/')))
-  assert(control.requests.some(url => url.startsWith('/gh/')))
+  assert(control.requests.filter(url => url.startsWith('/gh/')).length >= 2)
   assert.equal(controller.cancelDesktopUpdateDownload().status, 'cancelling')
   await ready('cancelled')
   await until(() => control.interrupted === 1, 'HTTP request aborted')

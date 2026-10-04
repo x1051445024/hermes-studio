@@ -62,10 +62,6 @@ function openWorkflow() {
   void router.push({ name: 'hermes.workflow' })
 }
 
-function openApiRelay() {
-  if (typeof window === 'undefined') return
-  window.open('https://apikey.fan/register?aff=LIBAPI', '_blank', 'noopener,noreferrer')
-}
 </script>
 
 <template>
@@ -186,21 +182,6 @@ function openApiRelay() {
           <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" />
         </svg>
         <span>{{ t('sidebar.models') }}</span>
-      </button>
-      <button v-if="!hasNavigationRail" class="page-sidebar-tab" type="button" @click="openApiRelay">
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-        >
-          <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-          <polyline points="15 3 21 3 21 9" />
-          <line x1="10" y1="14" x2="21" y2="3" />
-        </svg>
-        <span>{{ t('sidebar.apiRelay') }}</span>
       </button>
     </div>
     <div v-if="!hasNavigationRail" class="conversation-switch conversation-switch--four" role="tablist" aria-label="Conversation type">

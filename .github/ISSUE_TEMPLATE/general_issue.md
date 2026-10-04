@@ -16,7 +16,7 @@ assignees: ''
 
 ## Environment (if applicable)
 
-- Ekko Studio Version:
+- Hermes Studio Version:
 - Agent Runtime and Version (if applicable):
 - Operating System:
 - Node Version:

@@ -47,8 +47,8 @@ jobs:
           node <<'NODE'
           const { appendFileSync } = require('node:fs')
           const { name, version, private: isPrivate } = require('./package.json')
-          if (name !== 'ekko-studio' || isPrivate) {
-            throw new Error('Expected the public ekko-studio source package')
+          if (name !== 'hermes-studio' || isPrivate) {
+            throw new Error('Expected the public hermes-studio source package')
           }
           if (![version, `v${version}`].includes(process.env.RELEASE_TAG)) {
             throw new Error(`Release tag must match package version ${version}`)
@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [ekko-studio, hermes-web-ui]
+        package: [hermes-studio, hermes-web-ui]
     steps:
       - name: Download verified npm packages
         uses: actions/download-artifact@v4

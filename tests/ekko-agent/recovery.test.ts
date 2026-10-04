@@ -256,7 +256,7 @@ describe('Ekko capability recovery', () => {
 
       await runtime.run({ messages: ['What remains?'] })
       expect(String(requests[1].messages[0].content)).toContain(
-        'Ekko Studio will automatically reload Ekko Setup after all active runs finish',
+        'Hermes Studio will automatically reload Ekko Setup after all active runs finish',
       )
     } finally {
       await restoreDirectoryWrite(ekkoRoot)

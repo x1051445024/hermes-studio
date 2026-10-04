@@ -41,9 +41,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-web-ui:${{ github.event.release.tag_name || github.ref_name }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-studio:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-studio:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/hermes-studio:${{ github.event.release.tag_name || github.ref_name }}
 
   keep-release-out-of-latest:
     name: Keep release out of GitHub latest

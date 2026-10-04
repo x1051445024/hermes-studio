@@ -23,19 +23,16 @@ describe('Windows installer shutdown hook', () => {
     expect(script.indexOf('$$protectedProcessIds.Contains')).toBeLessThan(script.indexOf('$$cmd.IndexOf($$installDir'))
   })
 
-  it('waits for graceful app shutdown before force-stopping remaining processes', () => {
+  it('stops the installed process without launching it during an upgrade', () => {
     const script = readFileSync(resolve('packages/desktop/build/installer.nsh'), 'utf8')
-    const gracefulDeadline = script.indexOf('$$gracefulDeadline = (Get-Date).AddSeconds(30)')
-    const forceDeadline = script.indexOf('$$forceDeadline = (Get-Date).AddSeconds(5)', gracefulDeadline)
-    const forceStop = script.indexOf('Stop-Process -Id $$_.ProcessId -Force', gracefulDeadline)
 
-    expect(script).toContain(`nsExec::ExecToLog '"$INSTDIR\\\${EXE_NAME}" --quit'`)
-    expect(script).toContain('!insertmacro stopStudioExecutable "Hermes Studio.exe" ekko')
+    // The upgrade must never start the installed executable to ask it to quit:
+    // that raced the install and left Studio unable to close. It terminates an
+    // already-running process by image name instead.
+    expect(script).not.toContain(`nsExec::ExecToLog '"$INSTDIR\\\${EXE_NAME}" --quit'`)
+    expect(script).toContain(`nsExec::ExecToLog 'taskkill.exe /IM "\${EXE_NAME}" /T /F'`)
+    expect(script).toContain('!insertmacro stopStudioExecutable "Ekko Studio.exe" ekko')
     expect(script).toContain('!insertmacro stopStudioExecutable "Hermes Studio.exe" hermes')
-    expect(gracefulDeadline).toBeGreaterThan(-1)
-    expect(forceDeadline).toBeGreaterThan(gracefulDeadline)
-    expect(forceStop).toBeGreaterThan(forceDeadline)
-    expect(script.slice(gracefulDeadline, forceDeadline)).not.toContain('Stop-Process')
   })
 
   it('replaces the broken installed uninstaller before upgrading', () => {

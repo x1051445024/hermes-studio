@@ -16,7 +16,7 @@ export interface AgentTargetInput {
   extraHeaders?: Record<string, string>
   /** Forward the spawned CLI's own identity headers (originator/user-agent/anthropic-beta/...) upstream. */
   preserveClientIdentity?: boolean
-  /** Local customization: per-provider egress proxy for upstream requests (from the provider editor). */
+  /** Provider-level egress proxy configured by the provider editor. */
   proxyUrl?: string
 }
 

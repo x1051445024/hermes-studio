@@ -7,8 +7,8 @@ import { readDesktopUpdateSource, resolveDesktopUpdateSource, validateTestUpdate
 describe('packaged desktop update source', () => {
   it('preserves production primary and fallback feeds for normal packages', () => {
     expect(resolveDesktopUpdateSource({ name: 'hermes-studio', version: '1.0.0' })).toEqual({
-      channel: 'stable', url: 'https://download.ekkolearnai.com/latest',
-      fallbackUrl: 'https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download',
+      channel: 'stable', url: 'https://github.com/x1051445024/hermes-studio/releases/latest/download',
+      fallbackUrl: 'https://github.com/x1051445024/hermes-studio/releases/latest/download',
     })
   })
 
@@ -32,8 +32,8 @@ describe('packaged desktop update source', () => {
     'https://updates.example.com/latest.yml/', 'https://updates.example.com/\nlatest/',
     'https://download.ekkolearnai.com/', 'https://download.ekkolearnai.com/latest/',
     'https://download.ekkolearnai.com/latest/mac/',
-    'https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download',
-    'https://github.com/EKKOLearnAI/ekko-studio/releases/download/v1.2.3/',
+    'https://github.com/x1051445024/hermes-studio/releases/latest/download',
+    'https://github.com/x1051445024/hermes-studio/releases/download/v1.2.3/',
   ])('rejects unsafe, production or non-directory test feeds: %s', url => {
     expect(() => validateTestUpdateUrl(url)).toThrow()
   })

@@ -11,7 +11,7 @@ const source = validation.run.split("node <<'NODE'\n")[1].split('\nNODE')[0]
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })))
 
-function validate(version: string, tag: string, prerelease = false, name = 'ekko-studio') {
+function validate(version: string, tag: string, prerelease = false, name = 'hermes-studio') {
   const dir = mkdtempSync(join(tmpdir(), 'npm-publish-test-'))
   dirs.push(dir)
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }))
@@ -49,6 +49,6 @@ describe('npm publish release validation', () => {
   it('rejects another package', () => {
     const result = validate('0.7.23', 'v0.7.23', false, 'another-package')
     expect(result.status).not.toBe(0)
-    expect(result.stderr).toContain('Expected the public ekko-studio source package')
+    expect(result.stderr).toContain('Expected the public hermes-studio source package')
   })
 })

@@ -27,8 +27,8 @@ async function loadWithPackages(installedName: string, callerName: string) {
 }
 
 describe('installed Studio package identity', () => {
-  it.each(['ekko-studio', 'hermes-web-ui'])('checks %s even when launched from the other package directory', async name => {
-    const otherName = name === 'ekko-studio' ? 'hermes-web-ui' : 'ekko-studio'
+  it.each(['hermes-studio', 'hermes-web-ui'])('checks %s even when launched from the other package directory', async name => {
+    const otherName = name === 'hermes-studio' ? 'hermes-web-ui' : 'hermes-studio'
     const { readStudioPackageInfo, StudioHealthService } = await loadWithPackages(name, otherName)
     expect(readStudioPackageInfo()).toMatchObject({ name, version: '1.0.0' })
     vi.stubEnv('HERMES_WEB_UI_DISABLE_UPDATE_CHECK', '')

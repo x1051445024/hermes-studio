@@ -104,7 +104,7 @@ describe('Studio Live Activity orchestration', () => {
   await consume(event('chat.push.disabled',2))
   const end=JSON.parse(fetchMock.mock.calls[1][1].body)
   expect(end.event).toBe('end');expect(end.dismissal_at).toBe(end.occurred_at)
-  expect(end.content_state).toEqual({title:'Ekko Studio',status:'cancelled',currentStep:'',completedSteps:0,totalSteps:0})
+  expect(end.content_state).toEqual({title:'Hermes Studio',status:'cancelled',currentStep:'',completedSteps:0,totalSteps:0})
   await consume(event('chat.plan.updated',3));expect(fetchMock).toHaveBeenCalledTimes(3)
   expect(JSON.parse(fetchMock.mock.calls[2][1].body).event).toBe('start')
  })

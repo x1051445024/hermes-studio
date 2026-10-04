@@ -25,7 +25,7 @@ describe('dual npm release artifacts', () => {
     writeFileSync(join(root, 'dist/server/index.js'), '/* same server */')
     const output = join(root, 'output')
     const packed = packNpmReleases(root, output)
-    expect(packed.map(pkg => pkg.name)).toEqual(['ekko-studio', 'hermes-web-ui'])
+    expect(packed.map(pkg => pkg.name)).toEqual(['hermes-studio', 'hermes-web-ui'])
     expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(manifest)
 
     for (const artifact of packed) {
@@ -39,15 +39,15 @@ describe('dual npm release artifacts', () => {
       const pkg = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'))
       expect(pkg.name).toBe(artifact.name)
       expect(pkg.version).toBe('99.0.0-test.1')
-      expect(pkg.bin['ekko-studio-web']).toBeTruthy()
+      expect(pkg.bin['hermes-studio-web']).toBeTruthy()
       expect(pkg.bin['hermes-web-ui']).toBeTruthy()
       expect(readFileSync(join(packageDir, 'dist/server/index.js'), 'utf8')).toBe('/* same server */')
-      const version = execFileSync(process.execPath, [resolve(packageDir, pkg.bin['ekko-studio-web']), '--version'], {
+      const version = execFileSync(process.execPath, [resolve(packageDir, pkg.bin['hermes-studio-web']), '--version'], {
         cwd: root, encoding: 'utf8',
       })
-      expect(version.trim()).toBe(`${pkg.name === 'ekko-studio' ? 'ekko-studio-web' : 'hermes-web-ui'} v99.0.0-test.1`)
+      expect(version.trim()).toBe(`${pkg.name === 'hermes-studio' ? 'hermes-studio-web' : 'hermes-web-ui'} v99.0.0-test.1`)
       // Exercise the same __dirname layout as the bundled production server,
-      // while cwd still points to the canonical ekko-studio source fixture.
+      // while cwd still points to the canonical hermes-studio source fixture.
       const identityProbe = join(packageDir, 'dist/server/package-identity.cjs')
       buildSync({
         entryPoints: [resolve('packages/server/src/modules/studio/services/package-info.ts')],
@@ -61,7 +61,7 @@ describe('dual npm release artifacts', () => {
   it('rejects an unbuilt source before producing release artifacts', () => {
     const root = mkdtempSync(join(tmpdir(), 'studio-unbuilt-pack-test-'))
     dirs.push(root)
-    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ekko-studio', version: '1.0.0', bin: {} }))
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'hermes-studio', version: '1.0.0', bin: {} }))
     expect(() => packNpmReleases(root, join(root, 'output'))).toThrow('Build the package first')
   })
 })

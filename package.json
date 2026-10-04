@@ -1,18 +1,18 @@
 {
-  "name": "ekko-studio",
+  "name": "hermes-studio",
   "version": "0.7.26",
-  "description": "Ekko Studio is a local-first AI workspace for multi-agent chat, coding, and visual workflows, available on desktop and the web.",
+  "description": "Hermes Studio is a local-first AI workspace for multi-agent chat, coding, and visual workflows, available on desktop and the web.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/EKKOLearnAI/ekko-studio.git"
+    "url": "https://github.com/x1051445024/hermes-studio.git"
   },
-  "homepage": "https://ekkostudio.xyz",
+  "homepage": "https://github.com/x1051445024/hermes-studio",
   "license": "BSL-1.1",
   "engines": {
     "node": ">=23.0.0"
   },
   "keywords": [
-    "ekko-studio",
+    "hermes-studio",
     "ekko-agent",
     "multi-agent",
     "coding-agents",
@@ -35,11 +35,11 @@
     "typescript"
   ],
   "bin": {
+    "hermes-studio-web": "./bin/hermes-web-ui.mjs",
     "hermes-web-ui": "./bin/hermes-web-ui.mjs",
     "hermes-web-ui-mcp": "./bin/hermes-web-ui-mcp.mjs",
     "hermes-studio-mcp": "./bin/hermes-studio-mcp.mjs",
-    "ekko-studio-mcp": "./bin/ekko-studio-mcp.mjs",
-    "ekko-studio-web": "./bin/hermes-web-ui.mjs"
+    "ekko-studio-mcp": "./bin/ekko-studio-mcp.mjs"
   },
   "scripts": {
     "start": "vite --host --port 8648",

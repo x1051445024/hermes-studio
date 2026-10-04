@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Ekko Studio</strong>
+  <strong>Hermes Studio</strong>
   <a href="./README_zh.md">中文</a>
 </p>
 
@@ -11,31 +11,30 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/ekko-studio/releases/latest">Download Ekko Studio Desktop</a>
+  <a href="https://github.com/x1051445024/hermes-studio/releases/latest">Download Hermes Studio Desktop</a>
   ·
-  <a href="https://ekkostudio.xyz/#/docs/getting-started">Documentation</a>
+  <a href="https://github.com/x1051445024/hermes-studio#readme">Documentation</a>
   ·
-  <code>npm install -g ekko-studio && ekko-studio-web start</code>
+  <code>npm install -g hermes-studio && hermes-studio-web start</code>
 </p>
 
 <p align="center">
-  <img src="./docs/screenshots/overview/workspace.png" alt="Ekko Studio workspace with an example conversation" width="960"/>
+  <img src="./docs/screenshots/overview/workspace.png" alt="Hermes Studio workspace with an example conversation" width="960"/>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/ekko-studio"><img src="https://img.shields.io/npm/v/ekko-studio?style=flat-square&color=blue" alt="npm version"/></a>
-  <a href="https://github.com/EKKOLearnAI/ekko-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/ekko-studio?style=flat-square" alt="license"/></a>
-  <a href="https://github.com/EKKOLearnAI/ekko-studio/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/ekko-studio?style=flat-square" alt="stars"/></a>
+  <a href="https://www.npmjs.com/package/hermes-studio"><img src="https://img.shields.io/npm/v/hermes-studio?style=flat-square&color=blue" alt="npm version"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-studio?style=flat-square" alt="license"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/x1051445024/hermes-studio?style=flat-square" alt="stars"/></a>
 </p>
 
-Ekko Studio was previously named Hermes Studio / Hermes Web UI. The GitHub
-repository is `EKKOLearnAI/ekko-studio`. The primary npm package is
-`ekko-studio`, with the `ekko-studio-web` command. The legacy `hermes-web-ui`
-package and command remain supported and receive the same releases.
+Hermes Studio is the local-first AI workspace in this repository. The primary
+npm package is `hermes-studio`, with the `hermes-studio-web` command. The legacy
+`hermes-web-ui` package and command remain supported and receive the same releases.
 
 ## Screenshots
 
-Captured in Ekko Studio **v0.7.18** on 2026-09-10. Chat and workflow screens use demo data.
+Captured in Hermes Studio **v0.7.18** on 2026-09-10. Chat and workflow screens use demo data.
 
 | Visual workflows | Agent Manager |
 | --- | --- |
@@ -53,7 +52,7 @@ Browse installed skills, read their instructions, and enable them as needed.
 
 ## Core Capabilities
 
-| Area | What Ekko Studio does |
+| Area | What Hermes Studio does |
 | --- | --- |
 | Multi-agent runtime | Runs Hermes, Ekko, Claude Code, Codex, Pi, Grok, OpenCode, and DeepSeek Harness (DSH) with streaming responses, tool traces, generated-file previews, persistent sessions, and standalone desktop chat windows. |
 | Studio workspace | Provides shared chats, group chat, global-agent runs, workflows, files, voice, media, devices, themes, logs, usage, and App connectivity across agent runtimes. |
@@ -64,7 +63,7 @@ Browse installed skills, read their instructions, and enable them as needed.
 
 ## Agent and Platform Boundaries
 
-Ekko Studio provides a shared workspace for its supported agent runtimes,
+Hermes Studio provides a shared workspace for its supported agent runtimes,
 grouped into three agent families:
 
 | Agent family | Runtime | Owned behavior |
@@ -246,13 +245,13 @@ CLI maintenance commands:
 
 ```bash
 # Delete persisted login IP lock records
-ekko-studio-web clear-login-locks
+hermes-studio-web clear-login-locks
 
 # Delete login locks and restart the running Studio server
-ekko-studio-web clear-login-locks --restart
+hermes-studio-web clear-login-locks --restart
 
 # Create or reset the default super administrator login to admin / 123456
-ekko-studio-web reset-default-login
+hermes-studio-web reset-default-login
 ```
 
 `clear-login-locks` removes `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`. If the server is running, restart it to clear in-memory lock state. `reset-default-login` updates the Studio account database; if an `admin` user already exists, its password is reset to `123456` and the account is enabled as a super administrator.
@@ -291,7 +290,7 @@ ekko-studio-web reset-default-login
 - Bundles the Studio runtime and starts the local server automatically
 - Uses Cloudflare download endpoints for desktop auto-update metadata and assets first
 - Falls back to GitHub Releases `latest` assets if the Cloudflare update feed is unavailable
-- Windows upgrades attempt to close an existing Ekko Studio process before replacing files
+- Windows upgrades attempt to close an existing Hermes Studio process before replacing files
 
 ---
 
@@ -299,8 +298,8 @@ ekko-studio-web reset-default-login
 
 ### Desktop App (Recommended)
 
-Download the latest **Ekko Studio** desktop installer from
-[GitHub Releases](https://github.com/EKKOLearnAI/ekko-studio/releases/latest).
+Download the latest **Hermes Studio** desktop installer from
+[GitHub Releases](https://github.com/x1051445024/hermes-studio/releases/latest).
 
 Desktop builds are published for macOS, Windows, and Linux, with separate
 architecture assets where applicable. The desktop app bundles the Studio
@@ -314,7 +313,7 @@ desktop app, bundled Hermes Agent CLI, and bundled server CLI do not conflict:
 
 | Command | Description |
 | --- | --- |
-| `ekko-studio` | Open the Ekko Studio desktop app |
+| `ekko-studio` | Open the Hermes Studio desktop app |
 | `ekko-studio cli ...` | Run the bundled Hermes Agent CLI |
 | `ekko-studio web ...` | Run the bundled `hermes-web-ui` command |
 | `ekko-studio -h` | Show wrapper help |
@@ -329,21 +328,18 @@ Use `ekko-studio cli -h` for Hermes Agent CLI help and
 surface focused on the current task.
 
 Desktop auto-updates read the latest feed from
-`https://download.ekkolearnai.com/latest` first. If that endpoint is
-unavailable, the updater falls back to
-`https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download`.
+`https://github.com/x1051445024/hermes-studio/releases/latest/download`.
 
 ### npm
 
 ```bash
-npm install -g ekko-studio
-ekko-studio-web start
+npm install -g hermes-studio
+hermes-studio-web start
 ```
 
 The legacy package `hermes-web-ui` continues to receive the same releases.
-Both packages expose `ekko-studio-web` and the existing commands. Install either
-package; their global command aliases overlap. To switch, uninstall the old
-package before installing the other. User data remains in `~/.hermes-web-ui`.
+The primary package exposes `hermes-studio-web`; the legacy package exposes
+`hermes-web-ui`. User data remains in `~/.hermes-web-ui`.
 
 Open **http://localhost:8648**
 
@@ -353,7 +349,7 @@ Single-container deployment with integrated Hermes Agent:
 
 ```bash
 # Use pre-built image (Recommended)
-WEBUI_IMAGE=ekkoye8888/hermes-web-ui docker compose up -d
+WEBUI_IMAGE=${DOCKERHUB_USERNAME}/hermes-studio docker compose up -d
 
 # Or build from source
 docker compose up -d --build
@@ -380,7 +376,7 @@ and package installs such as `pip install hermes-agent`.
 
 ## Studio Environment Variables
 
-These variables configure Ekko Studio, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
+These variables configure Hermes Studio, its local Hermes runtime integration, and development/preview helpers. Provider API keys and Hermes Agent settings are normally managed through Hermes profiles; environment variables here are process-level overrides.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -425,8 +421,8 @@ These variables configure Ekko Studio, its local Hermes runtime integration, and
 | `HERMES_BRIDGE_TOOLSETS` | profile/default | Toolset override for bridge runs. |
 | `HERMES_BRIDGE_MAX_TURNS` | profile/default | Maximum turn override for bridge runs. |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | Controls bridge platform hint suppression passed to Hermes Agent. |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkostudio.xyz` | OpenRouter attribution referer sent by bridge runs. |
-| `HERMES_OPENROUTER_APP_TITLE` | `Ekko Studio` | OpenRouter attribution title sent by bridge runs. |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://github.com/x1051445024/hermes-studio` | OpenRouter attribution referer sent by bridge runs. |
+| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Studio` | OpenRouter attribution title sent by bridge runs. |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | OpenRouter attribution categories sent by bridge runs. |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | enabled | Controls Studio-managed Hermes gateway process handling. Set `0`, `false`, `no`, or `off` to use `hermes gateway start` instead. |
 | `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | unset | Skip startup gateway checks/autostart. Set `1`, `true`, `yes`, or `on` for dashboard-only deployments where another service owns Hermes gateway lifecycle. |
@@ -445,27 +441,27 @@ These variables configure Ekko Studio, its local Hermes runtime integration, and
 
 ### CLI Commands
 
-`hermes-web-ui` remains an alias for the `ekko-studio-web` commands below.
+`hermes-web-ui` remains an alias for the `hermes-studio-web` commands below.
 
 | Command | Description |
 | --- | --- |
-| `ekko-studio-web start [port]` | Start in background; accepts a positional port or `--port <port>` |
-| `ekko-studio-web client [port]` | Start for a remote client with gateway autostart disabled and permissive CORS |
-| `ekko-studio-web restart [port]` | Restart; stops the bridge by default |
-| `ekko-studio-web stop` | Stop the background process |
-| `ekko-studio-web status` | Check if running |
-| `ekko-studio-web clear-login-locks [--restart]` | Clear persisted login locks, optionally restart |
-| `ekko-studio-web reset-default-login` | Create or reset the default administrator login |
-| `ekko-studio-web update` / `upgrade` | Update to the latest version and restart |
-| `ekko-studio-web version` / `-v` | Show the version |
-| `ekko-studio-web -h` | Show help |
+| `hermes-studio-web start [port]` | Start in background; accepts a positional port or `--port <port>` |
+| `hermes-studio-web client [port]` | Start for a remote client with gateway autostart disabled and permissive CORS |
+| `hermes-studio-web restart [port]` | Restart; stops the bridge by default |
+| `hermes-studio-web stop` | Stop the background process |
+| `hermes-studio-web status` | Check if running |
+| `hermes-studio-web clear-login-locks [--restart]` | Clear persisted login locks, optionally restart |
+| `hermes-studio-web reset-default-login` | Create or reset the default administrator login |
+| `hermes-studio-web update` / `upgrade` | Update to the latest version and restart |
+| `hermes-studio-web version` / `-v` | Show the version |
+| `hermes-studio-web -h` | Show help |
 | `hermes-web-ui-mcp [api\|browser\|devices\|use]` | Run one managed Studio MCP toolset (same as `ekko-studio-mcp`) |
 
 Add `--no-open` to `start` or `client` when no browser should open.
 
 `restart`, `update`, and `upgrade` stop the Agent Bridge broker by default so restarted or updated servers do not reuse stale Python bridge processes. Set `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0` before restarting only when you explicitly want to keep the bridge broker and running bridge sessions alive.
 
-`update` / `upgrade` first attempt `npm cache clean --force`, then install the latest version of the running package (`ekko-studio@latest` or `hermes-web-ui@latest`) and restart that package. The Web UI version check uses the same package identity. Cache cleanup is best-effort; if it fails, the updater continues with the install.
+`update` / `upgrade` first attempt `npm cache clean --force`, then install the latest version of the running package (`hermes-studio@latest` or `hermes-web-ui@latest`) and restart that package. The Web UI version check uses the same package identity. Cache cleanup is best-effort; if it fails, the updater continues with the install.
 
 ### Auto Configuration
 
@@ -480,8 +476,8 @@ On startup the BFF server automatically:
 ## Development
 
 ```bash
-git clone https://github.com/EKKOLearnAI/ekko-studio.git
-cd ekko-studio
+git clone https://github.com/x1051445024/hermes-studio.git
+cd hermes-studio
 npm install
 npm run dev
 ```
@@ -536,7 +532,8 @@ full ownership tree, dependency rules, and API migration contract, see
 
 [BSL-1.1](./LICENSE)
 
-The license covers Ekko Studio, the `hermes-web-ui` npm package and CLI,
+The license covers Hermes Studio, the `hermes-studio` and `hermes-web-ui`
+npm packages and CLI,
 desktop applications, firmware, release
 artifacts, documentation, and associated files in this repository.
 

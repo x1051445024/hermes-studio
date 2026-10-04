@@ -13,7 +13,7 @@ const pkgDir = resolve(__dirname, '..')
 const pkg = JSON.parse(readFileSync(resolve(pkgDir, 'package.json'), 'utf-8'))
 const VERSION = pkg.version
 const PACKAGE_NAME = pkg.name
-const CLI_NAME = PACKAGE_NAME === 'ekko-studio' ? 'ekko-studio-web' : 'hermes-web-ui'
+const CLI_NAME = PACKAGE_NAME === 'hermes-studio' ? 'hermes-studio-web' : 'hermes-web-ui'
 const WEB_UI_HOME = process.env.HERMES_WEB_UI_HOME?.trim()
   ? resolve(process.env.HERMES_WEB_UI_HOME.trim())
   : resolve(homedir(), '.hermes-web-ui')
@@ -748,7 +748,7 @@ Options:
 }
 
 function doUpdate() {
-  if (!['ekko-studio', 'hermes-web-ui'].includes(PACKAGE_NAME)) {
+  if (!['hermes-studio', 'hermes-web-ui'].includes(PACKAGE_NAME)) {
     throw new Error(`Unsupported Studio npm package: ${PACKAGE_NAME}`)
   }
   console.log(`  ⬆ Updating ${PACKAGE_NAME}...`)

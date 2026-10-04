@@ -148,7 +148,7 @@ describe('runtime version manager storage migration', () => {
     expect(status.hermes.remoteVersions).toEqual(['0.19.1', '0.20.4'])
     expect(status.webui.remoteVersions).toEqual([])
     expect(fetch).toHaveBeenCalledWith(
-      'https://api.ekkostudio.xyz/api/studio/versions',
+      'https://raw.githubusercontent.com/x1051445024/hermes-studio/main/docs/studio/versions.json',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
@@ -253,12 +253,12 @@ describe('runtime version manager storage migration', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      'https://api.ekkostudio.xyz/api/studio/versions',
+      'https://raw.githubusercontent.com/x1051445024/hermes-studio/main/docs/studio/versions.json',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      'https://ekkostudio.xyz/versions.json',
+      'https://github.com/x1051445024/hermes-studio/raw/refs/heads/main/docs/studio/versions.json',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
     expect(status.hermes.remoteVersions).toEqual(['0.19.1', '0.20.0'])

@@ -1,6 +1,6 @@
 export const OPENROUTER_APP_HEADERS = {
-  'HTTP-Referer': 'https://ekkostudio.xyz',
-  'X-OpenRouter-Title': 'Ekko Studio',
+  'HTTP-Referer': 'https://github.com/x1051445024/hermes-studio',
+  'X-OpenRouter-Title': 'Hermes Studio',
   'X-OpenRouter-Categories': 'cli-agent,personal-agent',
 } as const
 

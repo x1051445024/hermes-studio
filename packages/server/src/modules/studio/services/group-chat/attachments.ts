@@ -255,6 +255,10 @@ const publishedImageMarkdown = new MarkdownIt({ html: false, linkify: false })
 function publishedMarkdownImagePaths(content: unknown): string[] {
     if (typeof content !== 'string' || !content.includes('![')) return []
     const paths: string[] = []
+    // Markdown backslash escapes consume Windows path separators. Normalize only
+    // this Markdown source before parsing; ordinary links and non-image blocks
+    // are still excluded by the token and extension checks below.
+    const markdown = content.replaceAll('\\', '/')
     const visit = (tokens: ReturnType<typeof publishedImageMarkdown.parse>) => {
         for (const token of tokens) {
             if (token.type === 'image') {
@@ -267,7 +271,7 @@ function publishedMarkdownImagePaths(content: unknown): string[] {
             if (token.children) visit(token.children)
         }
     }
-    visit(publishedImageMarkdown.parse(content, {}))
+    visit(publishedImageMarkdown.parse(markdown, {}))
     return paths
 }
 

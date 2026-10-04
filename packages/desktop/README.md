@@ -1,12 +1,12 @@
-# Ekko Studio
+# Hermes Studio
 
-Electron desktop distribution for Ekko Studio.
+Electron desktop distribution for Hermes Studio.
 
 ## Install
 
 Download the latest macOS, Windows, or Linux installer for your CPU
 architecture from the project
-[GitHub Releases](https://github.com/EKKOLearnAI/ekko-studio/releases/latest).
+[GitHub Releases](https://github.com/x1051445024/hermes-studio/releases/latest).
 
 The desktop app bundles the Web UI runtime and launches it locally from the
 native shell app.
@@ -31,22 +31,23 @@ After the packaged desktop app starts, it installs managed command shims:
 
 | Command | Description |
 | --- | --- |
-| `ekko-studio` | Open the Ekko Studio desktop app |
-| `ekko-studio cli ...` | Run the bundled Hermes Agent CLI |
-| `ekko-studio web ...` | Run the bundled `hermes-web-ui` command |
-| `ekko-studio -h` | Show wrapper help |
+| `hermes-studio` | Open the Hermes Studio desktop app |
+| `hermes-studio cli ...` | Run the bundled Hermes Agent CLI |
+| `hermes-studio web ...` | Run the bundled `hermes-web-ui` command |
+| `hermes-studio -h` | Show wrapper help |
 | `ekko-studio-mcp` | Run the managed Web UI MCP bridge |
 
-The desktop command is `ekko-studio`; the previous managed `hermes-studio`
-command is removed when the new shim is installed. No compatibility alias is created.
+The desktop command is `hermes-studio`. The pre-rebrand `ekko-studio` command is
+still installed as a compatibility alias, so shortcuts and scripts written
+before the rename keep working. Both names resolve to the same wrapper.
 
-Use `ekko-studio cli -h` for Hermes Agent CLI help and
-`ekko-studio web -h` for Web UI CLI help.
+Use `hermes-studio cli -h` for Hermes Agent CLI help and
+`hermes-studio web -h` for Web UI CLI help.
 
 ## Data directories
 
 On Windows, the first packaged launch after the rename updates the existing
-Studio startup entry from `Hermes Studio.exe` to `Ekko Studio.exe` in the same
+Studio startup entry from `Ekko Studio.exe` to `Hermes Studio.exe` in the same
 installation directory. Its Task Manager enabled/disabled state is preserved.
 No entry is created if startup was never enabled; custom entries and machine-wide
 entries are left alone. The migration is safe to retry on later launches.

@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Ekko Studio</strong>
+  <strong>Hermes Studio</strong>
   <a href="./README.md">English</a>
 </p>
 
@@ -11,30 +11,29 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/ekko-studio/releases/latest">下载 Ekko Studio 桌面版</a>
+  <a href="https://github.com/x1051445024/hermes-studio/releases/latest">下载 Hermes Studio 桌面版</a>
   ·
-  <a href="https://ekkostudio.xyz/#/docs/getting-started">使用文档</a>
+  <a href="https://github.com/x1051445024/hermes-studio#readme">使用文档</a>
   ·
-  <code>npm install -g ekko-studio && ekko-studio-web start</code>
+  <code>npm install -g hermes-studio && hermes-studio-web start</code>
 </p>
 
 <p align="center">
-  <img src="./docs/screenshots/overview/workspace.png" alt="Ekko Studio 工作区与示例对话" width="960"/>
+  <img src="./docs/screenshots/overview/workspace.png" alt="Hermes Studio 工作区与示例对话" width="960"/>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/ekko-studio"><img src="https://img.shields.io/npm/v/ekko-studio?style=flat-square&color=blue" alt="npm 版本"/></a>
-  <a href="https://github.com/EKKOLearnAI/ekko-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/ekko-studio?style=flat-square" alt="许可证"/></a>
-  <a href="https://github.com/EKKOLearnAI/ekko-studio/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/ekko-studio?style=flat-square" alt="Star"/></a>
+  <a href="https://www.npmjs.com/package/hermes-studio"><img src="https://img.shields.io/npm/v/hermes-studio?style=flat-square&color=blue" alt="npm 版本"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-studio?style=flat-square" alt="许可证"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/x1051445024/hermes-studio?style=flat-square" alt="Star"/></a>
 </p>
 
-Ekko Studio 原名 Hermes Studio / Hermes Web UI。GitHub 仓库为
-`EKKOLearnAI/ekko-studio`。主 npm 包名为 `ekko-studio`，启动命令为
-`ekko-studio-web`；旧的 `hermes-web-ui` 包和命令继续保留，并同步发布相同版本。
+Hermes Studio 是本仓库中的本地优先 AI 工作区。主 npm 包为 `hermes-studio`，启动命令为
+`hermes-studio-web`；旧的 `hermes-web-ui` 包和命令继续保留，并同步发布相同版本。
 
 ## 界面预览
 
-以下为 Ekko Studio **v0.7.18** 的界面截图（2026-09-10）。聊天和工作流使用演示数据。
+以下为 Hermes Studio **v0.7.18** 的界面截图（2026-09-10）。聊天和工作流使用演示数据。
 
 | 可视化工作流 | Agent 管理 |
 | --- | --- |
@@ -52,7 +51,7 @@ Ekko Studio 原名 Hermes Studio / Hermes Web UI。GitHub 仓库为
 
 ## 核心能力
 
-| 模块 | Ekko Studio 能做什么 |
+| 模块 | Hermes Studio 能做什么 |
 |---|---|
 | 多 Agent 运行时 | 运行 Hermes、Ekko、Claude Code、Codex、Pi、Grok、OpenCode 和 DeepSeek Harness（DSH），支持流式回复、工具调用轨迹、生成文件预览、持久化会话和桌面独立聊天窗口。 |
 | Studio 工作区 | 为不同 Agent 运行时提供统一的单聊、群聊、Global Agent、工作流、文件、语音、媒体、设备、主题、日志、用量和 App 连接能力。 |
@@ -63,7 +62,7 @@ Ekko Studio 原名 Hermes Studio / Hermes Web UI。GitHub 仓库为
 
 ## Agent 与平台边界
 
-Ekko Studio 为受支持的 Agent 运行时提供统一工作区，
+Hermes Studio 为受支持的 Agent 运行时提供统一工作区，
 这些运行时归入三个 Agent Family：
 
 | Agent Family | 运行时 | 负责的能力 |
@@ -243,13 +242,13 @@ CLI 维护命令：
 
 ```bash
 # 删除持久化的登录 IP 锁记录
-ekko-studio-web clear-login-locks
+hermes-studio-web clear-login-locks
 
 # 删除登录锁并重启正在运行的 Studio 服务
-ekko-studio-web clear-login-locks --restart
+hermes-studio-web clear-login-locks --restart
 
 # 创建或重置默认超级管理员登录名/密码为 admin / 123456
-ekko-studio-web reset-default-login
+hermes-studio-web reset-default-login
 ```
 
 `clear-login-locks` 会删除 `${HERMES_WEB_UI_HOME:-~/.hermes-web-ui}/.login-lock.json`。如果服务正在运行，需要重启服务才能清理内存中的锁定状态。`reset-default-login` 会更新 Studio 账户数据库；如果已存在 `admin` 用户，则会把密码重置为 `123456`，并启用为超级管理员账户。
@@ -288,7 +287,7 @@ ekko-studio-web reset-default-login
 - 内置 Studio 运行时，并自动启动本地服务
 - 桌面自动更新优先使用 Cloudflare 下载端点获取更新元数据和安装包
 - 如果 Cloudflare 更新源不可用，会回退到 GitHub Releases `latest` 资源
-- Windows 升级时会先尝试关闭已有 Ekko Studio 进程，再替换文件
+- Windows 升级时会先尝试关闭已有 Hermes Studio 进程，再替换文件
 
 ---
 
@@ -296,8 +295,8 @@ ekko-studio-web reset-default-login
 
 ### 桌面应用（推荐）
 
-从 [GitHub Releases](https://github.com/EKKOLearnAI/ekko-studio/releases/latest)
-下载最新的 **Ekko Studio** 桌面安装包。
+从 [GitHub Releases](https://github.com/x1051445024/hermes-studio/releases/latest)
+下载最新的 **Hermes Studio** 桌面安装包。
 
 桌面版会发布 macOS、Windows 和 Linux 构建；适用时会区分不同 CPU 架构。
 桌面应用内置 Studio 运行时；在 Windows、macOS 和 Linux 上，Hermes Agent 数据统一保存到 `~/.hermes`。
@@ -310,7 +309,7 @@ ekko-studio-web reset-default-login
 
 | 命令 | 说明 |
 |---|---|
-| `ekko-studio` | 打开 Ekko Studio 桌面应用 |
+| `ekko-studio` | 打开 Hermes Studio 桌面应用 |
 | `ekko-studio cli ...` | 运行内置 Hermes Agent CLI |
 | `ekko-studio web ...` | 运行内置 `hermes-web-ui` 命令 |
 | `ekko-studio -h` | 显示 wrapper 帮助 |
@@ -322,20 +321,18 @@ ekko-studio-web reset-default-login
 `ekko-studio web -h` 查看服务端 CLI 帮助。`ekko-studio-mcp` 默认暴露
 `api` 工具集；按任务选择 `browser`、`devices` 或 `use`，可以缩小 MCP 暴露面。
 
-桌面自动更新会优先读取 `https://download.ekkolearnai.com/latest`。
-如果该端点不可用，更新器会回退到
-`https://github.com/EKKOLearnAI/ekko-studio/releases/latest/download`。
+桌面自动更新会读取
+`https://github.com/x1051445024/hermes-studio/releases/latest/download`。
 
 ### npm 安装
 
 ```bash
-npm install -g ekko-studio
-ekko-studio-web start
+npm install -g hermes-studio
+hermes-studio-web start
 ```
 
-旧包 `hermes-web-ui` 会继续同步更新。两个包都提供 `ekko-studio-web` 和原有命令。
-选择其中一个包安装即可；全局命令有重叠，切换包名时请先卸载原包再安装新包。
-用户数据仍保存在 `~/.hermes-web-ui`。
+旧包 `hermes-web-ui` 会继续同步更新。主包提供 `hermes-studio-web`，
+兼容包提供 `hermes-web-ui`。用户数据仍保存在 `~/.hermes-web-ui`。
 
 打开 **http://localhost:8648**
 
@@ -345,7 +342,7 @@ ekko-studio-web start
 
 ```bash
 # 使用预构建镜像（推荐）
-WEBUI_IMAGE=ekkoye8888/hermes-web-ui docker compose up -d
+WEBUI_IMAGE=${DOCKERHUB_USERNAME}/hermes-studio docker compose up -d
 
 # 或从源码构建
 docker compose up -d --build
@@ -371,7 +368,7 @@ Studio 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 
 ## Studio 环境变量
 
-这些变量用于配置 Ekko Studio、本地 Hermes Runtime 集成以及开发/预览辅助能力。Provider API Key 和 Hermes Agent 相关设置通常仍通过 Hermes Profile 管理；这里列出的变量是进程级覆盖项。
+这些变量用于配置 Hermes Studio、本地 Hermes Runtime 集成以及开发/预览辅助能力。Provider API Key 和 Hermes Agent 相关设置通常仍通过 Hermes Profile 管理；这里列出的变量是进程级覆盖项。
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
@@ -416,8 +413,8 @@ Studio 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 | `HERMES_BRIDGE_TOOLSETS` | profile/默认值 | bridge 运行时的 toolset 覆盖。 |
 | `HERMES_BRIDGE_MAX_TURNS` | profile/默认值 | bridge 运行时的最大轮数覆盖。 |
 | `HERMES_BRIDGE_SUPPRESS_PLATFORM_HINT` | `cli` | 控制传给 Hermes Agent 的 bridge platform hint suppression。 |
-| `HERMES_OPENROUTER_APP_REFERER` | `https://ekkostudio.xyz` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
-| `HERMES_OPENROUTER_APP_TITLE` | `Ekko Studio` | Bridge 运行发送给 OpenRouter 的 Attribution Title。 |
+| `HERMES_OPENROUTER_APP_REFERER` | `https://github.com/x1051445024/hermes-studio` | bridge 运行发送给 OpenRouter 的 attribution referer。 |
+| `HERMES_OPENROUTER_APP_TITLE` | `Hermes Studio` | Bridge 运行发送给 OpenRouter 的 Attribution Title。 |
 | `HERMES_OPENROUTER_APP_CATEGORIES` | `cli-agent,personal-agent` | bridge 运行发送给 OpenRouter 的 attribution categories。 |
 | `HERMES_WEB_UI_MANAGED_GATEWAY` | 默认开启 | 控制 Studio 托管 Hermes Gateway 进程；设为 `0`、`false`、`no` 或 `off` 时改用 `hermes gateway start`。 |
 | `HERMES_WEB_UI_DISABLE_GATEWAY_AUTOSTART` | 未设置 | 跳过启动时的 gateway 检查/自动启动；dashboard-only 部署中如果由其它服务管理 Hermes gateway，可设为 `1`、`true`、`yes` 或 `on`。 |
@@ -434,27 +431,27 @@ Studio 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 
 ### CLI 命令
 
-原有 `hermes-web-ui` 命令仍可作为下列 `ekko-studio-web` 命令的别名使用。
+原有 `hermes-web-ui` 命令仍可作为下列 `hermes-studio-web` 命令的别名使用。
 
 | 命令 | 说明 |
 |---|---|
-| `ekko-studio-web start [port]` | 后台启动；支持位置端口或 `--port <port>` |
-| `ekko-studio-web client [port]` | 为远程客户端启动，关闭 Gateway 自动启动并允许跨域 |
-| `ekko-studio-web restart [port]` | 重启；默认会关闭 Bridge Broker |
-| `ekko-studio-web stop` | 停止后台进程 |
-| `ekko-studio-web status` | 查看运行状态 |
-| `ekko-studio-web clear-login-locks [--restart]` | 清理持久登录锁，可选择重启 |
-| `ekko-studio-web reset-default-login` | 创建或重置默认管理员登录 |
-| `ekko-studio-web update` / `upgrade` | 更新到最新版本并重启 |
-| `ekko-studio-web version` / `-v` | 显示版本号 |
-| `ekko-studio-web -h` | 显示帮助信息 |
+| `hermes-studio-web start [port]` | 后台启动；支持位置端口或 `--port <port>` |
+| `hermes-studio-web client [port]` | 为远程客户端启动，关闭 Gateway 自动启动并允许跨域 |
+| `hermes-studio-web restart [port]` | 重启；默认会关闭 Bridge Broker |
+| `hermes-studio-web stop` | 停止后台进程 |
+| `hermes-studio-web status` | 查看运行状态 |
+| `hermes-studio-web clear-login-locks [--restart]` | 清理持久登录锁，可选择重启 |
+| `hermes-studio-web reset-default-login` | 创建或重置默认管理员登录 |
+| `hermes-studio-web update` / `upgrade` | 更新到最新版本并重启 |
+| `hermes-studio-web version` / `-v` | 显示版本号 |
+| `hermes-studio-web -h` | 显示帮助信息 |
 | `hermes-web-ui-mcp [api\|browser\|devices\|use]` | 运行一个受管 Studio MCP 工具集（等同于 `ekko-studio-mcp`） |
 
 如不希望自动打开浏览器，可在 `start` 或 `client` 后添加 `--no-open`。
 
 `restart`、`update` 和 `upgrade` 默认会停止 Agent Bridge broker，避免重启或更新后的服务复用旧 Python bridge 进程。只有明确希望保留 broker 和正在运行的 bridge session 时，才在重启前设置 `HERMES_AGENT_BRIDGE_STOP_ON_SHUTDOWN=0`。
 
-`update` / `upgrade` 会先尝试执行 `npm cache clean --force`，再根据当前安装的包名升级 `ekko-studio@latest` 或 `hermes-web-ui@latest`，并重启对应包。Web UI 的版本检查也使用相同的包名。缓存清理失败时会提示警告，但不会中止升级安装。
+`update` / `upgrade` 会先尝试执行 `npm cache clean --force`，再根据当前安装的包名升级 `hermes-studio@latest` 或 `hermes-web-ui@latest`，并重启对应包。Web UI 的版本检查也使用相同的包名。缓存清理失败时会提示警告，但不会中止升级安装。
 
 ### 自动配置
 
@@ -469,8 +466,8 @@ Studio 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 ## 开发
 
 ```bash
-git clone https://github.com/EKKOLearnAI/ekko-studio.git
-cd ekko-studio
+git clone https://github.com/x1051445024/hermes-studio.git
+cd hermes-studio
 npm install
 npm run dev
 ```
@@ -524,7 +521,7 @@ Studio 状态与 Hermes Agent 状态彼此独立。Studio 默认使用
 
 [BSL-1.1](./LICENSE)
 
-该许可证覆盖 Ekko Studio、`hermes-web-ui` npm 包和 CLI、桌面应用、
+该许可证覆盖 Hermes Studio、`hermes-studio` 和 `hermes-web-ui` npm 包和 CLI、桌面应用、
 固件、发布产物、文档以及本仓库内的关联文件。
 
 MCP 主入口为 `bin/ekko-studio-mcp.mjs`，工具名统一使用 `ekko_studio_*` 前缀。旧的 `hermes-studio-mcp` / `hermes-web-ui-mcp` 命令及 `hermes_studio_*` 调用继续兼容。重启 MCP 客户端后可发现新工具名；Studio 会将托管服务配置迁移为 `ekko-studio-api`、`ekko-studio-browser`、`ekko-studio-devices` 和 `ekko-studio-use`。

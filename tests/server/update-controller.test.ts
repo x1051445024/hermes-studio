@@ -24,7 +24,7 @@ async function loadUpdateController(overrides: LoadUpdateControllerOptions = {})
   const readFileSync = overrides.readFileSync ?? vi.fn(() => JSON.stringify({
     name: 'hermes-web-ui',
     version: '0.0.0',
-    repository: { url: 'https://github.com/EKKOLearnAI/ekko-studio.git' },
+    repository: { url: 'https://github.com/x1051445024/hermes-studio.git' },
   }))
   const appendFileSync = overrides.appendFileSync ?? vi.fn()
 
@@ -102,7 +102,7 @@ describe('update controller', () => {
     delete process.env.HERMES_WEB_UI_PREVIEW_REPO
   })
 
-  it.each(['ekko-studio', 'hermes-web-ui'])('updates and restarts the installed %s package through the running Node executable', async (packageName) => {
+  it.each(['hermes-studio', 'hermes-web-ui'])('updates and restarts the installed %s package through the running Node executable', async (packageName) => {
     process.env.PORT = '9129'
     const nodeBinDir = getNodeBinDir()
     const npmCli = getNpmCliPath()
@@ -239,7 +239,7 @@ describe('update controller', () => {
   })
 
   it('loads preview tags through async git with a short timeout', async () => {
-    process.env.HERMES_WEB_UI_PREVIEW_REPO = 'https://github.com/EKKOLearnAI/ekko-studio'
+    process.env.HERMES_WEB_UI_PREVIEW_REPO = 'https://github.com/x1051445024/hermes-studio'
     const execFile = vi.fn((_command: string, _args: string[], _options: any, callback: any) => {
       callback(null, [
         'ghi789\trefs/tags/v0.6.9',
@@ -278,14 +278,14 @@ describe('update controller', () => {
     })
     expect(mocks.execFile).toHaveBeenCalledWith(
       'git',
-      ['ls-remote', '--tags', '--refs', 'https://github.com/EKKOLearnAI/ekko-studio.git'],
+      ['ls-remote', '--tags', '--refs', 'https://github.com/x1051445024/hermes-studio.git'],
       expect.objectContaining({ timeout: 8000 }),
       expect.any(Function),
     )
   })
 
   it('falls back to GitHub API when async git tag loading fails', async () => {
-    process.env.HERMES_WEB_UI_PREVIEW_REPO = 'https://github.com/EKKOLearnAI/ekko-studio'
+    process.env.HERMES_WEB_UI_PREVIEW_REPO = 'https://github.com/x1051445024/hermes-studio'
     const execFile = vi.fn((_command: string, _args: string[], _options: any, callback: any) => {
       callback(new Error('git timeout'), '', '')
     })
@@ -328,7 +328,7 @@ describe('update controller', () => {
       ],
     })
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.github.com/repos/EKKOLearnAI/ekko-studio/tags?per_page=100',
+      'https://api.github.com/repos/x1051445024/hermes-studio/tags?per_page=100',
       expect.objectContaining({
         headers: { 'User-Agent': 'hermes-web-ui-preview' },
         signal: expect.any(AbortSignal),

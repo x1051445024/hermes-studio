@@ -21,8 +21,8 @@ describe('Studio OpenRouter attribution', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
     for (const [, init] of fetchMock.mock.calls) {
       const headers = new Headers(init?.headers)
-      expect(headers.get('X-OpenRouter-Title')).toBe('Ekko Studio')
-      expect(headers.get('HTTP-Referer')).toBe('https://ekkostudio.xyz')
+      expect(headers.get('X-OpenRouter-Title')).toBe('Hermes Studio')
+      expect(headers.get('HTTP-Referer')).toBe('https://github.com/x1051445024/hermes-studio')
       expect(headers.get('X-OpenRouter-Categories')).toBe('cli-agent,personal-agent')
       expect(headers.get('authorization')).toBe('Bearer test-key')
     }

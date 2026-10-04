@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Ekko Studio API",
-    "description": "Ekko Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
+    "title": "Hermes Studio API",
+    "description": "Hermes Studio API — chat sessions, scheduled jobs, platform channels, model management, skills, memory, logs, file browser, group chat, and terminal.",
     "version": "0.7.26"
   },
   "servers": [
@@ -13081,7 +13081,7 @@
           "Chat Run"
         ],
         "summary": "Run chat and wait for completion",
-        "description": "Starts a Ekko Studio chat run through the chat-run transport and waits for a terminal result. Use this from HTTP/MCP callers that cannot consume Socket.IO streams.\nApp session sharing: requires the claimed recipient identity and input permission; scope is fixed to the shared session. workspace-file/content with download=1 requires download instead. Agent and terminal execution retain existing host permissions.",
+        "description": "Starts a Hermes Studio chat run through the chat-run transport and waits for a terminal result. Use this from HTTP/MCP callers that cannot consume Socket.IO streams.\nApp session sharing: requires the claimed recipient identity and input permission; scope is fixed to the shared session. workspace-file/content with download=1 requires download instead. Agent and terminal execution retain existing host permissions.",
         "operationId": "runChatOnce",
         "security": [
           {
@@ -13123,7 +13123,7 @@
                   },
                   "profile": {
                     "type": "string",
-                    "description": "Ekko Studio profile name. Defaults to the authenticated request profile or default."
+                    "description": "Hermes Studio profile name. Defaults to the authenticated request profile or default."
                   },
                   "provider": {
                     "type": "string",

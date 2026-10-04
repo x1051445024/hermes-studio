@@ -10,11 +10,11 @@ import { parsePublishOptions, publishNpmReleases } from '../../scripts/publish-n
 
 const root = resolve('fixture repo with spaces')
 const npmCli = resolve('fixture node/npm-cli.js')
-const packages = ['ekko-studio', 'hermes-web-ui'].map(name => ({ name, version: '1.0.0', filename: `${name}-1.0.0.tgz` }))
+const packages = ['hermes-studio', 'hermes-web-ui'].map(name => ({ name, version: '1.0.0', filename: `${name}-1.0.0.tgz` }))
 
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.read.mockReturnValue(JSON.stringify({ name: 'ekko-studio', version: '1.0.0' }))
+  mocks.read.mockReturnValue(JSON.stringify({ name: 'hermes-studio', version: '1.0.0' }))
   mocks.pack.mockReturnValue(packages)
 })
 
@@ -43,7 +43,7 @@ describe('local dual npm publishing', () => {
   })
 
   it('defaults prereleases to next and accepts an explicit dist-tag', () => {
-    mocks.read.mockReturnValue(JSON.stringify({ name: 'ekko-studio', version: '1.0.0-beta.1' }))
+    mocks.read.mockReturnValue(JSON.stringify({ name: 'hermes-studio', version: '1.0.0-beta.1' }))
     publishNpmReleases(root, parsePublishOptions([]), npmCli)
     expect(mocks.exec.mock.calls[1][1]).toContain('next')
     mocks.exec.mockClear()
@@ -64,7 +64,7 @@ describe('local dual npm publishing', () => {
     try {
       expect(() => publishNpmReleases(root, parsePublishOptions([]), npmCli)).toThrow('publish failed')
       expect(mocks.exec).toHaveBeenCalledTimes(2)
-      expect(log).toHaveBeenCalledWith('npm run publish:npm -- --package ekko-studio --tag latest')
+      expect(log).toHaveBeenCalledWith('npm run publish:npm -- --package hermes-studio --tag latest')
       expect(log).toHaveBeenCalledWith('npm run publish:npm -- --package hermes-web-ui --tag latest')
     } finally { log.mockRestore() }
   })

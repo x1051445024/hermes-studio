@@ -46,7 +46,7 @@ export function githubClient(run = runGh) {
     release: tag => JSON.parse(run(['api', `${apiRoot}/releases?per_page=100`, '--paginate', '--slurp']))
       .flat().find(release => release.tag_name === tag) ?? null,
     create: tag => api('releases', 'POST', { tag_name: tag, name: `Desktop update test: ${tag.replace('update-test-', '')}`,
-      body: 'Isolated Ekko Studio update testing. Test installers only. See the repository README for A → B instructions.',
+      body: 'Isolated Hermes Studio update testing. Test installers only. See the repository README for A → B instructions.',
       draft: true, prerelease: true, make_latest: 'false' }),
     assets: id => JSON.parse(run(['api', `${apiRoot}/releases/${id}/assets?per_page=100`, '--paginate', '--slurp'])).flat(),
     download: id => run(['api', `${apiRoot}/releases/assets/${id}`, '-H', 'Accept: application/octet-stream']),

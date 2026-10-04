@@ -10,7 +10,7 @@ export interface AgentGatewayRequest {
   provider?: string
   body: unknown
   headers?: Record<string, string>
-  /** Local customization: egress through this HTTP(S) proxy instead of connecting directly. */
+  /** Provider-level egress proxy configured by the provider editor. */
   proxyUrl?: string
   signal?: AbortSignal
 }
