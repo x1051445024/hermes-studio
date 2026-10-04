@@ -3,6 +3,14 @@
   <a href="./README_zh.md">中文</a>
 </p>
 
+> [!IMPORTANT]
+> **This repository is a modified, independently maintained fork — it is not the original
+> author's project.** It is based on [EKKOLearnAI/ekko-studio](https://github.com/EKKOLearnAI/ekko-studio)
+> and is **not** affiliated with, endorsed by, or supported by the upstream authors.
+> This fork keeps the **Hermes Studio** name and branding and carries its own local
+> modifications. Releases, downloads, and issue tracking live **here**, not upstream —
+> please report problems against this fork.
+
 <p align="center">
   A desktop app, local runtime, and web console for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a>.<br/>
   Chat with agents, manage models and profiles, connect platform channels,<br/>
@@ -10,19 +18,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">Download Hermes Studio Desktop</a>
+  <a href="https://github.com/x1051445024/hermes-studio/releases/latest">Download Hermes Studio Desktop</a>
   ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Hermes Web UI Demo" width="680"/>
+  <img src="./packages/client/src/assets/image.gif" alt="Hermes Studio demo" width="680"/>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/hermes-web-ui"><img src="https://img.shields.io/npm/v/hermes-web-ui?style=flat-square&color=blue" alt="npm version"/></a>
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-web-ui?style=flat-square" alt="license"/></a>
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/hermes-studio?style=flat-square" alt="stars"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-web-ui?style=flat-square" alt="license"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/x1051445024/hermes-studio?style=flat-square" alt="stars"/></a>
 </p>
 
 ## Core Capabilities
@@ -221,7 +229,7 @@ hermes-web-ui reset-default-login
 ### Desktop App (Recommended)
 
 Download the latest **Hermes Studio** desktop installer from
-[GitHub Releases](https://github.com/EKKOLearnAI/hermes-studio/releases/latest).
+[GitHub Releases](https://github.com/x1051445024/hermes-studio/releases/latest).
 
 Desktop builds are published for macOS, Windows, and Linux, with separate
 architecture assets where applicable. The desktop app bundles the Web UI
@@ -247,10 +255,15 @@ desktop app, bundled Hermes Agent CLI, and bundled Web UI CLI do not conflict:
 Use `hermes-studio cli -h` for Hermes Agent CLI help and
 `hermes-studio web -h` for Web UI CLI help.
 
-Desktop auto-updates read the latest feed from
-`https://download.ekkolearnai.com/latest` first. If that endpoint is
-unavailable, the updater falls back to
-`https://github.com/EKKOLearnAI/hermes-studio/releases/latest/download`.
+Desktop auto-updates for the installer published **from this fork** read the
+latest feed from this repository's
+[Releases](https://github.com/x1051445024/hermes-studio/releases/latest) (`latest.yml`), so
+updates follow this fork rather than upstream.
+
+> Note: the unmodified upstream source in this branch still defaults to the
+> upstream CDN (`https://download.ekkolearnai.com/latest`) with the upstream
+> repository as its fallback. Only the fork's own release build repoints that
+> feed; see the release notes for which feed a given installer uses.
 
 ### npm
 
@@ -382,7 +395,7 @@ On startup the BFF server automatically:
 ## Development
 
 ```bash
-git clone https://github.com/EKKOLearnAI/hermes-studio.git
+git clone https://github.com/x1051445024/hermes-studio.git
 cd hermes-web-ui
 npm install
 npm run dev
@@ -422,9 +435,9 @@ The BFF layer handles Socket.IO chat streaming, the Hermes agent bridge, profile
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=EKKOLearnAI/hermes-studio&type=Date)](https://star-history.com/#EKKOLearnAI/hermes-studio&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=x1051445024/hermes-studio&type=Date)](https://star-history.com/#x1051445024/hermes-studio&Date)
 
-<!-- If the chart above doesn't load, visit https://star-history.com/#EKKOLearnAI/hermes-studio -->
+<!-- If the chart above doesn't load, visit https://star-history.com/#x1051445024/hermes-studio -->
 
 ## License
 

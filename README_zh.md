@@ -3,6 +3,12 @@
   <a href="./README.md">English</a>
 </p>
 
+> [!IMPORTANT]
+> **本仓库是**独立维护的修改版 fork**，不是原作者的项目。** 它基于
+> [EKKOLearnAI/ekko-studio](https://github.com/EKKOLearnAI/ekko-studio)，与上游作者**没有**
+> 从属、授权或支持关系。本 fork 沿用 **Hermes Studio** 名称与品牌，并包含本地的定制修改。
+> 发布产物、下载与问题反馈都以**本仓库**为准，而不是上游——请针对本 fork 反馈问题。
+
 <p align="center">
   面向 <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> 的桌面应用、本地运行时和 Web 控制台。<br/>
   聊天、模型与 Profile 管理、平台渠道接入、任务自动化、<br/>
@@ -10,13 +16,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/releases/latest">下载 Hermes Studio 桌面版</a>
+  <a href="https://github.com/x1051445024/hermes-studio/releases/latest">下载 Hermes Studio 桌面版</a>
   ·
   <code>npm install -g hermes-web-ui && hermes-web-ui start</code>
 </p>
 
 <p align="center">
-  <img src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/image.gif" alt="Hermes Web UI 演示" width="680"/>
+  <img src="./packages/client/src/assets/image.gif" alt="Hermes Studio 演示" width="680"/>
 </p>
 
 <p align="center">
@@ -24,13 +30,13 @@
 </p>
 
 <p align="center">
-  <video src="https://github.com/EKKOLearnAI/hermes-studio/blob/main/packages/client/src/assets/video.mp4?raw=true" width="360" controls></video>
+  <video src="./packages/client/src/assets/video.mp4?raw=true" width="360" controls></video>
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/hermes-web-ui"><img src="https://img.shields.io/npm/v/hermes-web-ui?style=flat-square&color=blue" alt="npm 版本"/></a>
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-web-ui?style=flat-square" alt="许可证"/></a>
-  <a href="https://github.com/EKKOLearnAI/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/EKKOLearnAI/hermes-studio?style=flat-square" alt="Star"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/hermes-web-ui?style=flat-square" alt="许可证"/></a>
+  <a href="https://github.com/x1051445024/hermes-studio/stargazers"><img src="https://img.shields.io/github/stars/x1051445024/hermes-studio?style=flat-square" alt="Star"/></a>
 </p>
 
 ## 核心能力
@@ -228,7 +234,7 @@ hermes-web-ui reset-default-login
 
 ### 桌面应用（推荐）
 
-从 [GitHub Releases](https://github.com/EKKOLearnAI/hermes-studio/releases/latest)
+从 [GitHub Releases](https://github.com/x1051445024/hermes-studio/releases/latest)
 下载最新的 **Hermes Studio** 桌面安装包。
 
 桌面版会发布 macOS、Windows 和 Linux 构建；适用时会区分不同 CPU 架构。
@@ -254,9 +260,14 @@ hermes-web-ui reset-default-login
 使用 `hermes-studio cli -h` 查看 Hermes Agent CLI 帮助，使用
 `hermes-studio web -h` 查看 Web UI CLI 帮助。
 
-桌面自动更新会优先读取 `https://download.ekkolearnai.com/latest`。
-如果该端点不可用，更新器会回退到
-`https://github.com/EKKOLearnAI/hermes-studio/releases/latest/download`。
+**由本 fork 发布**的安装包，桌面自动更新会读取本仓库
+[Releases](https://github.com/x1051445024/hermes-studio/releases/latest) 的 `latest.yml`，
+因此更新跟随本 fork，而不是上游。
+
+> 注意：本分支中未改动的上游源码仍默认指向上游 CDN
+> （`https://download.ekkolearnai.com/latest`），并以原上游仓库作为回退。
+> 只有本 fork 自己的发布构建改写了该更新源；具体某个安装包用哪个源，以该
+> Release 的说明为准。
 
 ### npm 安装
 
@@ -385,7 +396,7 @@ Web UI 启动后端聊天能力时，会优先使用包含 `run_agent.py` 的源
 ## 开发
 
 ```bash
-git clone https://github.com/EKKOLearnAI/hermes-studio.git
+git clone https://github.com/x1051445024/hermes-studio.git
 cd hermes-web-ui
 npm install
 npm run dev
@@ -425,9 +436,9 @@ BFF 层负责：Socket.IO 聊天流式推送、Hermes agent bridge、按 Profile
 
 ## Star 历史
 
-[![Star 历史图表](https://api.star-history.com/svg?repos=EKKOLearnAI/hermes-studio&type=Date)](https://star-history.com/#EKKOLearnAI/hermes-studio&Date)
+[![Star 历史图表](https://api.star-history.com/svg?repos=x1051445024/hermes-studio&type=Date)](https://star-history.com/#x1051445024/hermes-studio&Date)
 
-<!-- 如上方图表未加载，可访问 https://star-history.com/#EKKOLearnAI/hermes-studio -->
+<!-- 如上方图表未加载，可访问 https://star-history.com/#x1051445024/hermes-studio -->
 
 ## 许可证
 
