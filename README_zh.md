@@ -278,6 +278,9 @@ hermes-web-ui start
 
 打开 **http://localhost:8648**
 
+> 该 npm 包由上游项目发布，不是本 fork 发布的。本 fork 的产物通过本仓库的
+> [Releases](https://github.com/x1051445024/hermes-studio/releases/latest) 分发。
+
 ### Docker Compose
 
 单容器部署，内置 Hermes Agent 运行时：

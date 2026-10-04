@@ -274,6 +274,10 @@ hermes-web-ui start
 
 Open **http://localhost:8648**
 
+> This npm package is published by the upstream project, not by this fork. The
+> fork itself is distributed through this repository's
+> [Releases](https://github.com/x1051445024/hermes-studio/releases/latest).
+
 ### Docker Compose
 
 Single-container deployment with integrated Hermes Agent:
